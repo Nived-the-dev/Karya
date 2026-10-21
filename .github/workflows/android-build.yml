@@ -13,9 +13,31 @@ jobs:
     timeout-minutes: 50
     steps:
       - name: Check out project
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+      - name: Restore Kārya source from uploaded ZIP
+        shell: bash
+        run: |
+          if [ -f lib/main.dart ]; then
+            echo "Flutter sources already exist in repository."
+          elif [ -f Karya_2.0_Flutter_Source.zip ]; then
+            mkdir -p "$RUNNER_TEMP/karya-import"
+            unzip -q Karya_2.0_Flutter_Source.zip -d "$RUNNER_TEMP/karya-import"
+            source_dir="$RUNNER_TEMP/karya-import/Karya_2.0_Flutter"
+            if [ ! -f "$source_dir/lib/main.dart" ] || [ ! -f "$source_dir/pubspec.yaml" ]; then
+              echo "::error::The uploaded ZIP does not contain the Kārya Flutter project."
+              exit 1
+            fi
+            cp -a "$source_dir"/. .
+            echo "Restored Flutter source, Android configuration, assets and tests."
+          else
+            echo "::error::Kārya source folders are missing. Upload Karya_2.0_Flutter_Source.zip to the repository root through Code > Add file > Upload files."
+            exit 1
+          fi
+          test -f lib/main.dart
+          test -f assets/karya_icon.png
+          test -f test/logic_test.dart
       - name: Install Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
