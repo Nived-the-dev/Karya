@@ -3,6 +3,8 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    paths-ignore:
+      - '.github/workflows/promote-source.yml'
   pull_request:
     branches: [main]
 permissions:
@@ -14,26 +16,23 @@ jobs:
     steps:
       - name: Check out project
         uses: actions/checkout@v5
-      - name: Restore Kārya source from latest uploaded ZIP
+      - name: Restore Kārya 2.1 source
         shell: bash
         run: |
-          if [ -f Karya_2.1_Flutter_Source.zip ]; then
-            archive=Karya_2.1_Flutter_Source.zip
-          elif [ -f Karya_2.0_Flutter_Source.zip ]; then
-            archive=Karya_2.0_Flutter_Source.zip
+          if [ -f lib/main.dart ] && [ -f lib/core/appearance.dart ]; then
+            echo "Using readable Kārya 2.1 sources from Git."
           else
-            echo "::error::Upload Karya_2.1_Flutter_Source.zip to the repository root."
-            exit 1
+            echo "Restoring original source and applying verified 2.1 patch."
+            mkdir -p "$RUNNER_TEMP/karya-import"
+            unzip -q Karya_2.0_Flutter_Source.zip -d "$RUNNER_TEMP/karya-import"
+            cp -a "$RUNNER_TEMP/karya-import/Karya_2.0_Flutter"/. .
+            python3 ci/upgrade21.py
+            python3 ci/repair_flutter.py
           fi
-          mkdir -p "$RUNNER_TEMP/karya-import"
-          unzip -q "$archive" -d "$RUNNER_TEMP/karya-import"
-          source_dir="$RUNNER_TEMP/karya-import/Karya_2.0_Flutter"
-          test -f "$source_dir/lib/main.dart"
-          test -f "$source_dir/pubspec.yaml"
-          cp -a "$source_dir"/. .
           test -f lib/main.dart
+          test -f lib/core/appearance.dart
+          test -f lib/features/ideas.dart
           test -f assets/karya_icon.png
-          echo "Restored $archive"
       - name: Install Java 17
         uses: actions/setup-java@v5
         with:
@@ -56,12 +55,10 @@ jobs:
           ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
       - name: Resolve packages
         run: flutter pub get
-      - name: Repair legacy code or clean generated template test
+      - name: Clean generated Flutter template test
         run: |
-          if [ -f Karya_2.1_Flutter_Source.zip ]; then
-            if [ -f test/widget_test.dart ]; then rm test/widget_test.dart; fi
-          else
-            python3 ci/repair_flutter.py
+          if [ -f test/widget_test.dart ] && grep -q "MyApp" test/widget_test.dart; then
+            rm test/widget_test.dart
           fi
       - name: Apply safe Dart lint fixes
         run: dart fix --apply || true
