@@ -1,0 +1,40 @@
+name: Kārya 3 Windows desktop build
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'Karya_3.0_Flutter_Source.zip'
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v5
+      - name: Restore Kārya 3.0
+        shell: pwsh
+        run: |
+          if (!(Test-Path 'Karya_3.0_Flutter_Source.zip')) { throw 'Upload the new source ZIP first.' }
+          Expand-Archive -Path 'Karya_3.0_Flutter_Source.zip' -DestinationPath "$env:RUNNER_TEMP/karya-src" -Force
+          Copy-Item -Path "$env:RUNNER_TEMP/karya-src/Karya_3.0_Flutter/*" -Destination . -Recurse -Force
+          if (!(Test-Path 'lib/features/constellation.dart')) { throw 'Kārya 3 code not found.' }
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter create --platforms=windows --project-name=karya_app --no-pub .
+      - run: flutter pub get
+      - run: flutter analyze --no-fatal-infos
+      - run: flutter test test
+      - run: flutter build windows --release
+      - name: Zip Windows app
+        shell: pwsh
+        run: Compress-Archive -Path 'build/windows/x64/runner/Release/*' -DestinationPath 'Karya_3.0_Windows.zip' -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Karya_3.0_Windows_App
+          path: Karya_3.0_Windows.zip
+          if-no-files-found: error
+          retention-days: 14
