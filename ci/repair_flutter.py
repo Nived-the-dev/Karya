@@ -41,3 +41,18 @@ default_test = Path("test/widget_test.dart")
 if default_test.is_file() and "MyApp" in default_test.read_text(encoding="utf-8"):
     default_test.unlink()
     print("Removed incompatible Flutter template widget test")
+
+# Flutter 3.47 requires Gradle 8.14 or later for Android builds.
+# Keep Android Gradle Plugin 8.11.1 (configured in settings.gradle.kts).
+wrapper = Path("android/gradle/wrapper/gradle-wrapper.properties")
+wrapper_text = wrapper.read_text(encoding="utf-8")
+if "gradle-8.13-bin.zip" in wrapper_text:
+    wrapper.write_text(
+        wrapper_text.replace("gradle-8.13-bin.zip", "gradle-8.14-bin.zip"),
+        encoding="utf-8",
+    )
+    print("Updated Android Gradle wrapper to 8.14")
+elif "gradle-8.14-bin.zip" in wrapper_text:
+    print("Android Gradle wrapper already targets 8.14")
+else:
+    raise SystemExit("Unexpected Android Gradle wrapper version")
