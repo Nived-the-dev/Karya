@@ -1,0 +1,53 @@
+name: Kārya 3 Android debug build
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'Karya_3.0_Flutter_Source.zip'
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v5
+      - name: Restore Kārya 3.0
+        shell: bash
+        run: |
+          test -f Karya_3.0_Flutter_Source.zip
+          mkdir -p "$RUNNER_TEMP/karya-3"
+          unzip -q Karya_3.0_Flutter_Source.zip -d "$RUNNER_TEMP/karya-3"
+          cp -a "$RUNNER_TEMP/karya-3/Karya_3.0_Flutter"/. .
+          test -f lib/features/constellation.dart
+          test -f lib/core/lan_sync.dart
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Create Android tooling
+        run: flutter create --platforms=android --project-name=karya_app --no-pub .
+      - name: Ensure Android API 36
+        run: |
+          yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --licenses >/dev/null || true
+          ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - run: flutter pub get
+      - name: Format
+        run: dart format lib test integration_test
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos
+      - name: Tests
+        run: flutter test test
+      - name: Build APK
+        run: flutter build apk --debug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Karya_3.0_Android_Test_APK
+          path: build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
