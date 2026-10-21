@@ -73,3 +73,25 @@ elif 'id("org.jetbrains.kotlin.android") version "2.2.20"' in settings_text:
     print("Kotlin Android Gradle plugin already targets 2.2.20")
 else:
     raise SystemExit("Unexpected Kotlin Android Gradle plugin version")
+
+# Kārya 2.1 syntax follow-up: fix one mistaken conditional and multiline literals.
+navigation = Path("lib/main.dart")
+main_source = navigation.read_text(encoding="utf-8")
+main_source = main_source.replace(
+    "brightness==Brightness.dark?.27:.45",
+    "brightness==Brightness.dark ? 0.27 : 0.45",
+)
+navigation.write_text(main_source, encoding="utf-8")
+
+chat = Path("lib/features/chat.dart")
+chat_source = chat.read_text(encoding="utf-8")
+chat_source = chat_source.replace(
+    "PRIVATE\nThis is not generative AI.",
+    "PRIVATE\\nThis is not generative AI.",
+)
+chat_source = chat_source.replace(
+    "tomorrow #math !high\nBuy a notebook\nRevise chemistry Friday...\n\nUse a new line",
+    "tomorrow #math !high\\nBuy a notebook\\nRevise chemistry Friday...\\n\\nUse a new line",
+)
+chat.write_text(chat_source, encoding="utf-8")
+print("Fixed Kārya 2.1 multiline strings and navigation opacity")
