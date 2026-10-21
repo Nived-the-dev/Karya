@@ -56,3 +56,20 @@ elif "gradle-8.14-bin.zip" in wrapper_text:
     print("Android Gradle wrapper already targets 8.14")
 else:
     raise SystemExit("Unexpected Android Gradle wrapper version")
+
+# Flutter 3.47 requires Android Kotlin Gradle Plugin >= 2.2.20.
+settings = Path("android/settings.gradle.kts")
+settings_text = settings.read_text(encoding="utf-8")
+if 'id("org.jetbrains.kotlin.android") version "2.2.0"' in settings_text:
+    settings.write_text(
+        settings_text.replace(
+            'id("org.jetbrains.kotlin.android") version "2.2.0"',
+            'id("org.jetbrains.kotlin.android") version "2.2.20"',
+        ),
+        encoding="utf-8",
+    )
+    print("Updated Kotlin Android Gradle plugin to 2.2.20")
+elif 'id("org.jetbrains.kotlin.android") version "2.2.20"' in settings_text:
+    print("Kotlin Android Gradle plugin already targets 2.2.20")
+else:
+    raise SystemExit("Unexpected Kotlin Android Gradle plugin version")
