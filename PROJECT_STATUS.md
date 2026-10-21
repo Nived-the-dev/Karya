@@ -16,6 +16,7 @@
 - App version 2.1.0+2, Gradle 8.14, Kotlin 2.2.20.
 
 ## Verification
+- The readable Flutter source is committed directly in GitHub (`lib/`, `android/`, `assets/`, `test/`, `integration_test/`), and the source-promotion workflow passed on 2026-10-21.
 - Offline Python/SQLite/Android configuration checks: 8 passed (2026-10-21).
 - GitHub Actions Kārya 2.1 run #39611394438: Dart analysis passed, 20 Flutter tests passed, Android debug APK built and uploaded successfully.
 - Device installation and interactive manual smoke test: **not yet performed**. Source checks, Dart analysis, Flutter tests, and debug APK build passed in CI.
