@@ -60,3 +60,9 @@ The package ID `com.karya.studentplanner` is **provisional**. Confirm that it is
 ## Caution on future edits
 
 Database schema is version 1. Adding new tables/columns later requires a Drift `onUpgrade` migration and upgrade tests. Local dates are date-only strings and notification instants are local ISO timestamps. Changing app timezone, migrating existing installations or restoring archived habits should be verified on physical devices.
+
+## Kārya 2.1 update (2026-10-21)
+
+The v2.1 source adds five color personalities with black OLED-style dark canvases, Ideas notepad, Brain Dump task preview, subject-first Home, quick task creation, guided tour, page swipes and configurable haptics. See `FEATURES.md` and `PROJECT_STATUS.md` for exact functionality and verification limits.
+
+**Upgrading from Kārya 2.0:** The SQLite schema is migrated from v1 to v2 and preserves existing tasks/habits while creating an `ideas` table. Do not clear app data when updating the APK if you want to retain records. APK updates require the same Android signing identity and application ID.

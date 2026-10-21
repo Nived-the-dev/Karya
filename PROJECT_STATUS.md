@@ -1,29 +1,26 @@
-# Kārya 2.0 — Project status (revised 2026-10-21)
+# Kārya 2.1 — Project status
 
-**Status: source refined; Android compile/test and publication NOT verified.**
+## Implemented in source
+- Replaced the crash-prone subject dropdown with safe popup selectors. Added regression widget test.
+- Five personalities (Classic, Soft Pop, Monochrome, Forest, Lavender Haze), each with Light, Dark, or System brightness. All dark themes use **#000000** app canvases.
+- Subject-first Home with colored folders, live open-task counts, and add/manage shortcuts.
+- Quick one-field task creation; optional subject/date/priority/reminder details.
+- Five swipeable tabs (Home, Tasks, Habits, Ideas, Progress) with finger-following PageView and animated navigation indicator.
+- Haptic feedback and card presses, adjustable haptics/reduced motion.
+- First-launch guided tour with skip and replay from Settings.
+- Offline Brain Dump (suggestions + explicit review before saving) while retaining advanced command assistant. No AI API is advertised or called.
+- Ideas notepad with SQLite persistence, pinned notes, search, autosave, and convert-to-task.
+- About story written with requested language and authentic GitHub/LinkedIn links.
+- Offline-first and ad-free; no accounts or tracking SDKs.
+- Database schema upgraded to version 2; migration preserves v1 tasks, subjects, habits.
+- App version 2.1.0+2, Gradle 8.14, Kotlin 2.2.20.
 
-## Implemented or improved in source
-- Flutter UI for tasks, subjects, subtasks, habits, progress graph, heatmap, command assistant and settings; neo-brutalist branding
-- Task subject-folder navigation now opens its own filtered task list
-- Live subtask check-off/create/delete without closing the details sheet
-- Strict command-date parsing, safer calendar-day arithmetic and archive-history ordering
-- Settings clear-data now clears application preferences as well as SQLite records; reminder queue is synchronized
-- Local SQLite/Drift schema, real 7-day task completion history graph, optional task/habit reminder defaults, Flutter tests and a repeatable offline source-check suite
-- Android API 36 configuration, notification permission/reboot receiver, backup opt-out, artwork, privacy draft, store text and publishing guide
-- Optional GitHub Actions `android-build.yml` and Windows one-command build verifier
+## Verification
+- Offline Python/SQLite/Android configuration checks: 8 passed (2026-10-21).
+- GitHub Actions Kārya 2.1 run #39611394438: Dart analysis passed, 20 Flutter tests passed, Android debug APK built and uploaded successfully.
+- Device installation and interactive manual smoke test: **not yet performed**. Source checks, Dart analysis, Flutter tests, and debug APK build passed in CI.
+- Earlier Kārya 2.0 had 16 passing Flutter tests and an installable debug APK, but Android real-world testing identified a dropdown assertion.
 
-## Verification evidence
-- 6/6 original Python reference tests passed
-- 8/8 offline source and SQLite smoke tests passed (including real SQLite constraints/file re-open)
-- XML and package YAML parsed; all Dart source files passed bracket-only lexical balance scan
-- Launcher and feature artwork have the specified pixel dimensions
-
-## Not verified / critical next checks
-- Flutter/Dart SDK is **not installed here**; direct downloads to Flutter hosts fail DNS resolution
-- `flutter pub get`, `dart format`, `flutter analyze`, `flutter test`, Android APK/AAB build and emulator tests **not run**
-- GitHub Actions workflow authored but **not run**; cannot claim an APK will compile without CI result
-- Reminder permissions, reboot/timezone behavior, screen-reader usability, crash-free run, and real app screenshots require Android testing
-- App ID `com.karya.studentplanner` is provisional; no signing key supplied or generated
-- Live privacy URL, contact info, verified Play publisher, final policy forms and review are pending
-
-**Next action:** Use the Windows build verifier on a Flutter/Android Studio machine, or run the supplied GitHub Actions CI after adding the source to a repository. Resolve any compilation or runtime errors before treating Kārya as releasable.
+## Next actions
+1. Install the verified Kārya 2.1 debug APK and manually verify onboarding, tab swipes, subject selection, notes, habits, reminders, appearance, and persistence on Android.
+2. Only then prepare a signed release bundle using the authorized publisher's retained upload key and complete the Google Play requirements. Do not use a debug APK for Play release.

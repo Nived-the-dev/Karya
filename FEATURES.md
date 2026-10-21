@@ -1,32 +1,13 @@
-# Feature inventory — source implementation, pending Android verification
+# Kārya 2.1 — Features
 
-| Feature | Source implementation | Verification |
-|---|---|---|
-| Home, Tasks, Habits, Progress tabs | Flutter navigation and screens | Not run |
-| Add/edit/complete/reopen/delete/search/filter/sort tasks | Drift CRUD, UI | Not run |
-| Priorities, due dates & times, optional reminder | Forms and database | Not run |
-| Subject folders: add, edit, delete, colors/icons | CRUD and UI | Not run |
-| Subtasks, task duplicate | Database and detail sheet | Not run |
-| Habits: daily/selected weekdays, history and archive | SQL schedules/status revisions and UI | Not run |
-| Check off habits and undo, uniqueness | SQL primary key and set display | SQL constraint checked independently |
-| 7-day bar chart & monthly calendar heatmap | Data-driven Flutter widgets | Not run |
-| Rule-based chatbot commands & direct task-entry syntax | Dart parser + database command flow | Not run |
-| Light/dark/follow-system mode | Theme controller using preferences | Not run |
-| Local reminders: permission, edit/reschedule, reboot | Plugin configuration and scheduling | Needs device testing |
-| In-app privacy, licenses, clear all local records | Settings UI | Not run |
-| Play icon & feature graphic | Original files provided | Pixel dimensions verified |
-| Real screenshots, verified APK, signed AAB | Not produced | Blocked by SDK/device/signing |
-
-The source has no user-facing JSON import/export. Historical habit schedule revisions and active/inactive state are represented by date-keyed event records; past scheduled dates remain meaningful after a change.
-
-**Important limitation:** Only an initial v1 database creation schema exists; no upgrade-from-old-Android-release migrations can be tested because there was no older Kārya Android release. Existing desktop Python task databases are not automatically imported (by design, since no JSON import/export is requested).
-
-## October 2026 source refinement
-
-- Tap a subject on Home to open tasks filtered to that subject.
-- Manage subtasks in a live-updating task detail sheet.
-- Reject impossible dates in rule-based `/addtask` input.
-- Show real task completions over the last seven days.
-- Optionally create a new task reminder one hour before its deadline or a new habit reminder at 6 PM (Settings).
-- Clear all data also clears saved local preferences.
-- Offline SQLite/Android source smoke checks and CI workflows included; Flutter builds still require external toolchain verification.
+- **Home**: Subject boards, pending-task counts, today's due/overdue tasks, habits, quick-add, Brain Dump shortcut.
+- **Tasks**: Create/edit/complete/reopen/duplicate/delete, optional priority, subject, due date, reminder, subtasks, search/filter/sort. Form keeps advanced fields optional. Subject chooser uses popups instead of dropdowns.
+- **Habits**: Repeat schedules, completion records, editing, archiving, reminders, previous-day review.
+- **Ideas**: Offline notepad in separate tab, autosave, pin, search, delete, and idea-to-task conversion.
+- **Progress**: Weekly habit graph, monthly heatmap, and task-completion summary using real SQLite data.
+- **Brain Dump**: Offline rule-based parsing of user-entered lines to preview task suggestions; explicit confirmation before insertion. Advanced slash commands remain available behind a toggle. No generative AI or API calls.
+- **Theme**: Five personalities: Classic, Soft Pop, Monochrome, Forest, Lavender Haze. Each supports Light, Dark, Follow System. True-black dark app canvas. Saved preferences.
+- **Gestures**: Horizontal finger-following tab swipe with animated bottom indicator, low-key card feedback, optional haptics, reduced-motion preference.
+- **Tour**: First-launch welcome slides with Skip and Replay from Settings.
+- **About**: Developer story, LinkedIn, GitHub, privacy policy, licenses, deletion of all local data.
+- **Privacy**: No advertising, tracking, mandatory accounts or remote services. The opt-in external links open external websites only when tapped.

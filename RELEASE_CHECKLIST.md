@@ -1,21 +1,14 @@
-# Google Play release checklist
+# Kārya 2.1 release checklist
 
-- [ ] Eligible, verified adult publisher/account owner confirmed (Google Play requires age 18+).
-- [ ] Confirm final Android application ID and unique app name before first upload.
-- [ ] Flutter / Android Studio / SDK 36 installed, Gradle wrapper generated (see `tool/BUILD_KARYA_WINDOWS.ps1` or CI).
-- [ ] Dependencies resolved, formatting/analyze/tests clean.
-- [ ] Launch Android app on real device/emulator; verify core CRUD and offline access.
-- [ ] Verify real reminders after reboot, app termination, timezone change and permission denial.
-- [ ] Verify dark/light mode, talkback, large text and small-screen layout.
-- [ ] Verify settings delete data, reinstall, Android backup behavior.
-- [ ] Have publisher independently generate/upload-key, back it up in safe storage and configure ignored `android/key.properties`.
-- [ ] Build signed **release** Android App Bundle; verify signing and target API 36.
-- [ ] Host reviewed HTML privacy policy with a genuine support email on public HTTPS URL and use that link in-app and in Console if required.
-- [ ] Re-check Google Play policies and complete Data Safety, content rating, target audience, ads, permissions and app access questionnaires truthfully.
-- [ ] Capture real screenshots from Android and produce supported aspect ratios/sizes.
-- [ ] Upload store icon, feature graphic, real screenshots, descriptions, contact, release notes.
-- [ ] Use internal testing, followed by applicable closed-testing requirements.
-- [ ] Address test issues and request production eligibility when permitted.
-- [ ] Submit final production release and await actual Play Console confirmation.
-
-A simulated app picture is not a valid substitute for a real screenshot. This checklist does not assert publication.
+- [x] Source code and visual system updated.
+- [x] SQLite notes migration v1 -> v2 coded.
+- [x] Offline source verification checks run successfully.
+- [x] `flutter pub get`, `dart format`, `flutter analyze --no-fatal-infos`, `flutter test` passed in CI (20 tests).
+- [x] `flutter build apk --debug` succeeded for 2.1.
+- [ ] APK installed and first-launch UI tested on Android.
+- [ ] Verify all five themes in light and true-black dark modes on Android.
+- [ ] Verify onboarding replay and all five tabs, including held partial swipes.
+- [ ] Verify task creation, subject selection, habit check-ins, note autosave, Brain Dump confirmation, reminders and restart persistence.
+- [ ] Real 2.1 screenshots captured.
+- [ ] Signing credentials provisioned outside Git; signed release AAB generated and verified.
+- [ ] Publisher reviews privacy policy, audience, Data safety, permissions, contacts, developer eligibility and testing-track requirements.

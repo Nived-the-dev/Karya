@@ -1,7 +1,7 @@
 name: karya_app
 description: Kārya — Less Organising. More Doing.
 publish_to: none
-version: 1.0.0+1
+version: 2.1.0+2
 environment:
   sdk: '>=3.12.0 <4.0.0'
 dependencies:
@@ -19,6 +19,7 @@ dependencies:
   flutter_timezone: ^5.1.1
   timezone: ^0.11.2
   intl: ^0.20.2
+  url_launcher: ^6.3.2
   cupertino_icons: ^1.0.8
 dev_dependencies:
   flutter_test:

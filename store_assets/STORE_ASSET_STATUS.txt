@@ -1,0 +1,5 @@
+Provided: actual original icon graphics, Android launcher/adaptive assets and 512x512 Play icon; 1024x500 feature graphic, ready-to-review listing text and privacy policy draft.
+
+NOT PROVIDED: actual app screenshots, because no Flutter/Android runtime was available to capture genuine app screens. See tool/SCREENSHOT_CHECKLIST.md for Android capture steps.
+
+NOT PROVIDED: a verified APK or signed AAB, developer email, hosted privacy URL, Play publisher identity, or uploaded listing. Do not submit draft materials without checking release build and correcting publisher information.

@@ -1,21 +1,23 @@
-# Kārya 2.0 — Verification report (2026-10-21)
+# Kārya 2.1 — Test results (2026-10-21)
 
-| Check | Result | Verification |
-|---|---|---|
-| Original Python reference command tests | PASS (6/6) | `python -m unittest discover -s tests -v` inside extracted Python original |
-| SQLite schema / foreign keys / unique constraints / disk persistence | PASS | `python tool/verify_source.py` — 8 source smoke tests |
-| Android manifest XML and backup opt-out | PASS (structural) | XML parsed, expected permissions/flags present |
-| App store graphics dimensions | PASS | PNG header asserts 512×512 and 1024×500 |
-| Source/test Dart bracket-only syntax scan | PASS (lexical; NOT compiler) | Local quote-aware delimiter scanner, not a Dart parser |
-| Package pubspec and CI YAML parse | PASS | Python YAML parser |
-| `flutter pub get` | NOT RUN | Flutter absent; DNS to pub.dev unavailable |
-| `dart format` / `flutter analyze` | NOT RUN | Flutter/Dart absent |
-| Flutter unit + widget tests | NOT RUN | Flutter/Dart absent |
-| Android test APK | NOT BUILT | Flutter/Android SDK absent; debug artifact not supplied |
-| Android signed release AAB | NOT BUILT | Flutter toolchain, publisher confirmation, secure release signing absent |
-| Real device reminders, stability, accessibility | NOT TESTED | No emulator or Android device |
-| Real Play Store app screenshots | NOT CAPTURED | Requires running app |
-| GitHub Actions CI | NOT RUN | Workflow generated only; repository not initialized |
-| Play Console publication | NOT STARTED | Requires verified authorized account owner and Play Console action |
+## Verified
+- 8 local Python source/SQLite/Android configuration checks: **passed**.
+- Static delimiter consistency of Dart sources checked in local development; this is **not a Dart analyzer or compiler**.
 
-These source checks cannot establish Dart type correctness, generated Android scaffold correctness, dependency resolution or runtime behavior. Do not publish without full tests and review.
+## GitHub Actions 2.1 results — PASSED
+GitHub run: `https://github.com/Nived-the-dev/Karya/actions/runs/39611394438`
+- `dart format` — passed.
+- `flutter analyze --no-fatal-infos` — passed (informational lint hints remain).
+- `flutter test test` — **20 passed**, including the task-board dropdown regression test, Ideas database CRUD tests, Brain Dump parser and true-black palette tests.
+- `flutter build apk --debug` — passed, APK created.
+- GitHub artifact upload — passed.
+
+## Not yet run on 2.1
+- Real Android device smoke test of onboarding, editing, notes, haptics, reminders, theme variants and partially held swipes.
+- Android v2.0 to v2.1 database migration tested on a real device.
+- Google Play signed release app bundle.
+
+## Historical 2.0 result
+- 16 Flutter tests and a debug APK built in GitHub Actions, **but a real user found a task-screen dropdown assertion afterward**. This prompted the v2.1 safe subject popup and widget regression test.
+
+See `PROJECT_STATUS.md` for release blockers. Never treat a successful CI compile as proof that every UI route was manually tested on-device.
