@@ -95,3 +95,9 @@ chat_source = chat_source.replace(
 )
 chat.write_text(chat_source, encoding="utf-8")
 print("Fixed Kārya 2.1 multiline strings and navigation opacity")
+
+# Brain Dump folder lookup: Map<String, int> receives a proven non-null ID.
+chat = Path("lib/features/chat.dart")
+text = chat.read_text(encoding="utf-8")
+text = text.replace("folderIds[name]=subjectId;", "folderIds[name]=subjectId!;")
+chat.write_text(text, encoding="utf-8")
