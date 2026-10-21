@@ -36,6 +36,8 @@ jobs:
           test -f lib/main.dart
           test -f assets/karya_icon.png
           test -f test/logic_test.dart
+      - name: Apply Kārya 2.1 source and migration
+        run: python3 ci/upgrade21.py
       - name: Install Java 17
         uses: actions/setup-java@v5
         with:
@@ -73,7 +75,7 @@ jobs:
       - name: Upload test APK
         uses: actions/upload-artifact@v4
         with:
-          name: Karya_2.0_Test_APK
+          name: Karya_2.1_Test_APK
           path: build/app/outputs/flutter-apk/app-debug.apk
           if-no-files-found: error
           retention-days: 14
