@@ -1,0 +1,58 @@
+name: Karya 5 Android test build
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'Karya_5.0_Flutter_Source.zip'
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v5
+      - name: Restore complete Karya 5 source
+        shell: bash
+        run: |
+          test -f Karya_5.0_Flutter_Source.zip
+          mkdir -p "$RUNNER_TEMP/karya-v5"
+          unzip -q Karya_5.0_Flutter_Source.zip -d "$RUNNER_TEMP/karya-v5"
+          cp -a "$RUNNER_TEMP/karya-v5/Karya_5.0_Flutter"/. .
+          test -f lib/features/calendar_planner.dart
+          test -f lib/features/flow_planner.dart
+          test -f lib/core/lan_sync.dart
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: false
+      - name: Generate missing Android wrapper
+        run: flutter create --platforms=android --project-name=karya_app --no-pub .
+      - name: Install Android API 36
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Clean incompatible Flutter template test
+        run: rm -f test/widget_test.dart
+      - name: Resolve packages
+        run: flutter pub get
+      - name: Format and syntax-check
+        run: dart format lib test integration_test
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+      - name: Automated tests
+        run: flutter test test
+      - name: Android debug APK
+        run: flutter build apk --debug
+      - name: Upload verified APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Karya_5_Android_Test_APK
+          path: build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
