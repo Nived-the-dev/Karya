@@ -19,6 +19,12 @@ jobs:
         run: |
           if (!(Test-Path 'Karya_5.0_Flutter_Source.zip')) { throw 'Karya 5 source ZIP missing' }
           Expand-Archive -Path 'Karya_5.0_Flutter_Source.zip' -DestinationPath "$env:RUNNER_TEMP/karya-base" -Force
+          # The repository also contains older top-level Flutter files.
+          # Delete these before copying, otherwise Copy-Item merges directories
+          # and git apply sees old file contents instead of the archived v5 source.
+          foreach ($folder in @('lib','test','integration_test','assets','android','windows')) {
+            if (Test-Path $folder) { Remove-Item -Path $folder -Recurse -Force }
+          }
           Copy-Item -Path "$env:RUNNER_TEMP/karya-base/Karya_5.0_Flutter/*" -Destination . -Recurse -Force
           git apply --check ci/karya6.patch
           if ($LASTEXITCODE -ne 0) { throw 'Patch validation failed' }
