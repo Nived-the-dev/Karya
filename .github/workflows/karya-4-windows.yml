@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'Karya_4.0_Flutter_Source.zip'
+      - '.github/workflows/karya-4-windows.yml'
+      - 'ci/fix_v4_build.py'
 permissions:
   contents: read
 jobs:
@@ -29,6 +31,8 @@ jobs:
         shell: pwsh
         run: |
           if (Test-Path 'test/widget_test.dart') { Remove-Item 'test/widget_test.dart' -Force }
+      - name: Repair Kārya 4 source compatibility
+        run: python ci/fix_v4_build.py
       - run: flutter pub get
       - run: dart format lib test integration_test
       - run: flutter analyze --no-fatal-infos --no-fatal-warnings
