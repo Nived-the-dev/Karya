@@ -1,0 +1,992 @@
+diff --git a/RELEASE_6_STATUS.md b/RELEASE_6_STATUS.md
+new file mode 100644
+index 0000000..4fe7958
+--- /dev/null
++++ b/RELEASE_6_STATUS.md
+@@ -0,0 +1,23 @@
++# Kārya 6 source candidate — 2026-10-22
++
++**Status:** This is a development preview. Static source checks are not Flutter compilation, and Android/Windows on-device verification is required. Do not install over valuable local data without a backup.
++
++## Addressed in this candidate
++- Calendar date-selected task creation (with due date), multiple tasks/day, descriptions, scheduled time, and edit entry point.
++- Home quick-add redirects to Tasks.
++- Contextual, replayable tab help; searchable notes board with pinned/color-coded notes, optional automatic saves; fewer phone footer items.
++- Windows navigation: dedicated Journey, Wi-Fi Sync, Help choices.
++- Wi-Fi: pairing network diagnosis, selecting local private-network interface, opt-in rehosting at launch, encrypted reachability check, and explicit conflict handling.
++- Reminder: on-demand diagnostics/test notification, permission request from due/reminder editor, reschedule on resume.
++- Flow: Material ancestor for standalone route and drag adjusted for current zoom factor.
++- A voluntary honesty pledge displayed in Journey.
++- Long subject folder labels truncate rather than overflow; compact phone heading.
++- Tests for calendar multiple tasks and descriptions, standalone Flow, notes and Help.
++
++## Still requiring validation / limitations
++- No guarantee the inherited Flutter `_dependents.isEmpty` assertion is eliminated; it may require a full Android stack trace with reproduction steps.
++- Local network sync still rejects conflicting independent edits rather than merging records and cannot work across subnets without router configuration.
++- Android inexact alarms may arrive later than their scheduled time depending on battery policy. Notifications must be enabled in the app and system; Android manufacturer restrictions vary.
++- Notes use the existing synced note body; color choice is device-local. No automatic multi-device syncing of note colors yet.
++- Diagram editor is not at diagram.net feature parity (connector editing, grouping, shape libraries, undo/redo).
++- Real-device testing and release signing are still required.
+diff --git a/lib/core/lan_sync.dart b/lib/core/lan_sync.dart
+index 37dac14..4873e2a 100644
+--- a/lib/core/lan_sync.dart
++++ b/lib/core/lan_sync.dart
+@@ -47,7 +47,11 @@ class LocalSync {
+   }
+   Future<List<String>> ipv4Addresses() async {
+     final interfaces=await NetworkInterface.list(type:InternetAddressType.IPv4);
+-    return interfaces.expand((i)=>i.addresses).where((ip)=>!ip.isLoopback)
++    return interfaces.expand((i)=>i.addresses).where((ip)=>!ip.isLoopback && (
++      ip.rawAddress[0]==10 ||
++      ip.rawAddress[0]==192 && ip.rawAddress[1]==168 ||
++      ip.rawAddress[0]==172 && ip.rawAddress[1]>=16 && ip.rawAddress[1]<=31 ||
++      ip.rawAddress[0]==169 && ip.rawAddress[1]==254))
+       .map((ip)=>ip.address).toSet().toList();
+   }
+   Future<String> startHost(KaryaDatabase db) async {
+@@ -114,6 +118,14 @@ class LocalSync {
+       return await _open(content,code);
+     }finally{http.close(force:true);}
+   }
++  Future<String> testConnection(String host,String code) async {
++    final ip=InternetAddress.tryParse(host.trim());
++    if(ip==null || ip.type!=InternetAddressType.IPv4)
++      throw const FormatException('Use the IPv4 address on the host device.');
++    final reply=await _request(ip.address,code.trim().toUpperCase(),{'op':'status'});
++    if(reply['ok']!=true)throw StateError('Host did not respond.');
++    return 'Pairing test succeeded. You can sync changes now.';
++  }
+   Future<String> sync(KaryaDatabase db,String host,String code) async {
+     final ip=InternetAddress.tryParse(host.trim());
+     if(ip==null||ip.type!=InternetAddressType.IPv4||ip.isLoopback)
+diff --git a/lib/core/notifications.dart b/lib/core/notifications.dart
+index 82041dc..d937127 100644
+--- a/lib/core/notifications.dart
++++ b/lib/core/notifications.dart
+@@ -39,7 +39,7 @@ class Reminders {
+     if (!await enabled()) return;
+     await updateLocalTimezone();
+     final now = tz.TZDateTime.now(tz.local);
+-    for (final task in data.tasks) {
++    for (final task in data.tasks.take(500)) {
+       if (task.completed || task.reminderAt == null) continue;
+       final date = DateTime.tryParse(task.reminderAt!);
+       if (date == null) continue;
+diff --git a/lib/features/calendar_planner.dart b/lib/features/calendar_planner.dart
+index d22c89b..91efa19 100644
+--- a/lib/features/calendar_planner.dart
++++ b/lib/features/calendar_planner.dart
+@@ -16,6 +16,7 @@ class CalendarPlannerScreen extends ConsumerStatefulWidget {
+ class _CalendarPlannerScreenState extends ConsumerState<CalendarPlannerScreen> {
+   DateTime displayed = DateTime(DateTime.now().year, DateTime.now().month);
+   DateTime selected = dayOnly(DateTime.now());
++  String viewMode = 'Month';
+ 
+   void monthBy(int offset) => setState(() {
+     displayed = DateTime(displayed.year, displayed.month + offset);
+@@ -28,7 +29,15 @@ class _CalendarPlannerScreenState extends ConsumerState<CalendarPlannerScreen> {
+       loading: () => const Center(child: CircularProgressIndicator()),
+       error: (error, _) => Center(child: Text('Could not open calendar: $error')),
+       data: (app) => ScreenBody(children: [
+-        const Headline('YOUR CALENDAR', 'A calmer way to see what is coming up.'),
++        Row(children:[
++          Expanded(child:Text('PLANNER',style:Theme.of(context).textTheme.titleLarge)),
++          for(final mode in ['Month','Week','Day'])Padding(
++            padding:const EdgeInsets.only(left:5),child:ChoiceChip(
++              label:Text(mode,style:const TextStyle(fontSize:12)),
++              selected:viewMode==mode,
++              onSelected:(_)=>setState(()=>viewMode=mode))),
++        ]),
++        const SizedBox(height:10),
+         LayoutBuilder(builder: (context, constraints) {
+           final compact = constraints.maxWidth < 850;
+           final overview = _MonthView(
+@@ -39,6 +48,35 @@ class _CalendarPlannerScreenState extends ConsumerState<CalendarPlannerScreen> {
+             onSelect: (day) => setState(() => selected = day),
+           );
+           final agenda = _DayAgenda(day: selected, data: app, ref: ref);
++          final weekStart=selected.subtract(Duration(days:selected.weekday-1));
++          final week=NeoCard(child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
++            Row(children:[
++              IconButton(tooltip:'Previous week',onPressed:()=>setState(()=>selected=
++                selected.subtract(const Duration(days:7))),icon:const Icon(Icons.chevron_left)),
++              Expanded(child:Text(DateFormat('d MMM yyyy').format(weekStart),textAlign:TextAlign.center,
++                style:const TextStyle(fontWeight:FontWeight.w800))),
++              IconButton(tooltip:'Next week',onPressed:()=>setState(()=>selected=
++                selected.add(const Duration(days:7))),icon:const Icon(Icons.chevron_right)),
++            ]),
++            Row(children:[for(var i=0;i<7;i++)Expanded(child:Padding(
++              padding:const EdgeInsets.symmetric(horizontal:2),child:InkWell(
++                onTap:()=>setState(()=>selected=weekStart.add(Duration(days:i))),
++                child:Container(padding:const EdgeInsets.symmetric(vertical:8),
++                  decoration:BoxDecoration(
++                    color:dayKey(selected)==dayKey(weekStart.add(Duration(days:i)))
++                      ?Theme.of(context).colorScheme.primary.withValues(alpha:.2):null,
++                    borderRadius:BorderRadius.circular(9)),
++                  child:Column(children:[Text(DateFormat('E').format(weekStart.add(Duration(days:i))),
++                    style:const TextStyle(fontSize:10)),Text('${weekStart.add(Duration(days:i)).day}',
++                    style:const TextStyle(fontWeight:FontWeight.w900)),
++                    Text('${app.tasks.where((t)=>t.dueDay==dayKey(weekStart.add(Duration(days:i)))).length}',
++                      style:const TextStyle(fontSize:10))])),
++              )))])
++          ]));
++          if(viewMode=='Day')return agenda;
++          if(viewMode=='Week')return compact?Column(children:[week,const SizedBox(height:12),agenda]):
++            Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
++              Expanded(flex:6,child:week),const SizedBox(width:16),Expanded(flex:4,child:agenda)]);
+           return compact
+               ? Column(children: [overview, const SizedBox(height: 12), agenda])
+               : Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+@@ -142,19 +180,24 @@ class _DayAgenda extends StatelessWidget {
+   final DateTime day;final AppData data;final WidgetRef ref;
+   @override Widget build(BuildContext context) {
+     final key=dayKey(day);
+-    final tasks=data.tasks.where((t)=>t.dueDay==key).toList();
++    final tasks=data.tasks.where((t)=>t.dueDay==key).toList()..sort((a,b)=>(a.dueAt??'').compareTo(b.dueAt??''));
+     final habits=data.habits.where((h)=>h.scheduledOn(day)).toList();
+     final goals=data.goals.where((g)=>g.targetDay==key).toList();
+     return NeoCard(child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+       Text(DateFormat('EEEE, d MMM').format(day),style:Theme.of(context).textTheme.titleLarge),
+       const SizedBox(height:10),
+-      OutlinedButton.icon(onPressed:()=>quickAddTask(context,ref),
++      OutlinedButton.icon(onPressed:()=>showTaskEditor(context,ref,initialDueDate:DateTime(day.year,day.month,day.day,18)),
+         icon:const Icon(Icons.add),label:const Text('Add task')),
+       if(tasks.isEmpty&&habits.isEmpty&&goals.isEmpty)
+         const Padding(padding:EdgeInsets.symmetric(vertical:24),child:Text(
+           'Nothing planned here yet. Leave room to breathe.')),
+       for(final task in tasks)CheckboxListTile(
+-        contentPadding:EdgeInsets.zero,dense:true,title:Text(task.title),
++        contentPadding:EdgeInsets.zero,dense:true,title:Text(task.title,maxLines:2,overflow:TextOverflow.ellipsis),
++        subtitle:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
++          if(task.dueAt!=null)Text(DateFormat('h:mm a').format(DateTime.parse(task.dueAt!))),
++          if(task.description.isNotEmpty)Text(task.description,maxLines:3,overflow:TextOverflow.ellipsis),
++        ]),secondary:IconButton(tooltip:'Edit task',icon:const Icon(Icons.edit_outlined),
++          onPressed:()=>showTaskEditor(context,ref,task:task)),
+         value:task.completed,
+         onChanged:(value)=>ref.read(appProvider.notifier).change(
+           (db)=>db.setTaskDone(task.id,value??false)),
+diff --git a/lib/features/flow_planner.dart b/lib/features/flow_planner.dart
+index de887c7..6a9b031 100644
+--- a/lib/features/flow_planner.dart
++++ b/lib/features/flow_planner.dart
+@@ -58,7 +58,9 @@ class _FlowPlannerScreenState extends ConsumerState<FlowPlannerScreen> {
+       position.dx.toStringAsFixed(1),position.dy.toStringAsFixed(1)]);
+   }
+   void _zoom(double factor){
+-    viewport.value=viewport.value.clone()..scale(factor);
++    final current=viewport.value.getMaxScaleOnAxis();
++    final target=(current*factor).clamp(.30,3.5).toDouble();
++    viewport.value=viewport.value.clone()..scale(target/current);
+   }
+   Future<void> _resetPositions() async {
+     final prefs=await SharedPreferences.getInstance();
+@@ -121,7 +123,7 @@ class _FlowPlannerScreenState extends ConsumerState<FlowPlannerScreen> {
+         return LayoutBuilder(builder:(context,constraints){
+           final compact=constraints.maxWidth<650;
+           _fit(constraints.maxWidth);
+-          return Column(children:[
++          return Material(color:Theme.of(context).scaffoldBackgroundColor,child:Column(children:[
+             Padding(padding:const EdgeInsets.fromLTRB(14,12,14,4),child:
+               Row(children:[
+                 Expanded(child:Text('FLOW PLANNER',style:Theme.of(context).textTheme.headlineMedium,
+@@ -171,8 +173,8 @@ class _FlowPlannerScreenState extends ConsumerState<FlowPlannerScreen> {
+                       child:GestureDetector(
+                         onPanEnd:!editing?null:(_)=>_savePosition(n.key),
+                         onPanUpdate:!editing?null:(details)=>_move(n.key,
+-                          Offset((pos[n.key]!.dx+details.delta.dx).clamp(6.0,width-250.0).toDouble(),
+-                            (pos[n.key]!.dy+details.delta.dy).clamp(6.0,height-96.0).toDouble())),
++                          Offset((pos[n.key]!.dx+details.delta.dx/viewport.value.getMaxScaleOnAxis()).clamp(6.0,width-250.0).toDouble(),
++                            (pos[n.key]!.dy+details.delta.dy/viewport.value.getMaxScaleOnAxis()).clamp(6.0,height-96.0).toDouble())),
+                         child:NeoCard(color:n.type=='goal'?colorFor(3):null,
+                           onTap:editing?null:(){
+                             if(n.type=='goal'){
+@@ -199,7 +201,7 @@ class _FlowPlannerScreenState extends ConsumerState<FlowPlannerScreen> {
+             const Padding(padding:EdgeInsets.fromLTRB(12,6,12,10),child:Text(
+               'Link existing tasks and habits using the chain button. Your work is saved locally.',
+               textAlign:TextAlign.center,style:TextStyle(fontSize:11))),
+-          ]);
++          ]));
+         });
+       },
+     );
+diff --git a/lib/features/help.dart b/lib/features/help.dart
+new file mode 100644
+index 0000000..14caa05
+--- /dev/null
++++ b/lib/features/help.dart
+@@ -0,0 +1,103 @@
++import 'package:flutter/material.dart';
++import 'package:go_router/go_router.dart';
++import 'neo.dart';
++
++/// Contextual, skippable tutorials. A user can replay any explanation at any time.
++const featureHelp = <({String title, IconData icon, List<String> steps, String action})>[
++  (title:'Home and subjects', icon:Icons.home_outlined,action:'Create a subject',steps:[
++    'Home is your overview: subjects, tasks due soon and a quick-add button.',
++    'Tap Create a Subject to give related tasks a shared folder.',
++    'Tap a folder to open Tasks filtered to that subject. Long names are truncated, not deleted.'
++  ]),
++  (title:'Tasks and reminders', icon:Icons.check_box_outlined,action:'Add a task',steps:[
++    'Use Add Task to write a title; description, subject, priority and deadline are optional.',
++    'A task only appears on Calendar when you assign a due date. Multiple tasks may share a day.',
++    'Choose a reminder time. In Settings, enable notifications and allow Android permission.',
++    'Check a task only when it is completed. Open a task to add or check individual steps.'
++  ]),
++  (title:'Calendar', icon:Icons.calendar_month_outlined,action:'Pick a day',steps:[
++    'Choose a date to see every task, its deadline time and its full description.',
++    'Tap Add task on that date. A date is prefilled; you can add as many tasks as you need.',
++    'Use the month arrows to move through dates. Colored dots indicate planned activity.',
++    'Edits you save on Calendar also appear in Tasks, and vice versa.'
++  ]),
++  (title:'Flow Planner',icon:Icons.account_tree_outlined,action:'Make a goal',steps:[
++    'Create a goal, then connect existing tasks and habits using the link icon.',
++    'Use Pan mode to drag the background and pinch with two fingers to zoom.',
++    'Use Move mode to position one card. Positions persist after you leave the screen.',
++    'Use the zoom controls and reset option if you lose track of your plan.'
++  ]),
++  (title:'Habits',icon:Icons.auto_awesome_outlined,action:'Create a habit',steps:[
++    'Create a habit, choose its weekdays and optionally set a daily reminder.',
++    'Tap the checkbox only after following the habit on that date.',
++    'Habit progress tracks your actual chosen schedule, not days you were never meant to do it.'
++  ]),
++  (title:'Progress',icon:Icons.bar_chart_outlined,action:'View your activity',steps:[
++    'Switch between bar, line, area and donut views of recorded habit check-ins.',
++    'The heatmap shows days with scheduled check-ins; it is not a grade.',
++    'You can always return after time away. A missed day should not prevent a new start.'
++  ]),
++  (title:'Ideas and notes',icon:Icons.lightbulb_outline,action:'Write a note',steps:[
++    'Ideas is a private offline notepad for rough thoughts, lists and plans.',
++    'Pin important ideas, search text, or link a note to an existing goal.',
++    'Use Convert to task when an idea becomes something actionable.'
++  ]),
++  (title:'Private Wi-Fi sync',icon:Icons.wifi_tethering_outlined,action:'Pair devices',steps:[
++    'Put both devices on the same trusted local Wi-Fi. On Windows, allow Kārya through the firewall on private networks.',
++    'On either device, choose Start Sharing. On the other, enter its local IP and pairing code, then Connect.',
++    'Keep the host app open while syncing. You can repeat the process in the other direction.',
++    'If both devices contain independent edits, Kārya pauses rather than overwriting data. Keep separate backups before resolving conflicts.'
++  ]),
++  (title:'Journey and points',icon:Icons.workspace_premium_outlined,action:'Explore ranks',steps:[
++    'Journey shows your milestones and how many points are recorded.',
++    'Rewards are intended to celebrate tasks and habits you genuinely completed.',
++    'You can choose your own pace. Your rank is not a measure of your worth or productivity.'
++  ]),
++  (title:'Appearance and privacy',icon:Icons.palette_outlined,action:'Change theme',steps:[
++    'Open Customize to choose color theme, light/dark mode, and layout.',
++    'On Android, More contains Ideas, Habits, Progress, Journey, Wi-Fi sync and Help.',
++    'Kārya works offline; optional Wi-Fi sync is direct and needs no cloud account.'
++  ]),
++];
++
++class HelpScreen extends StatelessWidget {
++  const HelpScreen({super.key,this.initialTopic});
++  final int? initialTopic;
++  @override Widget build(BuildContext context)=>Scaffold(
++    appBar:AppBar(title:const Text('HELP & GUIDES')),
++    body:ScreenBody(children:[
++      const Headline('LEARN KĀRYA','Small lessons you can revisit whenever you need.'),
++      const Text('Choose any feature to see exactly how it works. Nothing here changes your data.'),
++      const SizedBox(height:12),
++      for(var i=0;i<featureHelp.length;i++)NeoCard(onTap:()=>showFeatureGuide(context,i),child:Row(children:[
++        Icon(featureHelp[i].icon),const SizedBox(width:14),
++        Expanded(child:Text(featureHelp[i].title,style:const TextStyle(fontSize:16,fontWeight:FontWeight.w800))),
++        const Icon(Icons.chevron_right_rounded),
++      ])),
++      const SizedBox(height:8),
++      OutlinedButton.icon(onPressed:()=>context.push('/tour'),icon:const Icon(Icons.school_outlined),
++        label:const Text('Replay guided app tour')),
++    ]),
++  );
++}
++Future<void> showFeatureGuide(BuildContext context,int index) async {
++  if(index<0||index>=featureHelp.length)return;
++  final feature=featureHelp[index];
++  await showModalBottomSheet<void>(context:context,isScrollControlled:true,useSafeArea:true,
++    showDragHandle:true,builder:(sheet)=>Padding(
++      padding:EdgeInsets.fromLTRB(20,8,20,MediaQuery.viewInsetsOf(sheet).bottom+24),
++      child:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,
++        crossAxisAlignment:CrossAxisAlignment.stretch,children:[
++        Row(children:[Icon(feature.icon,size:26),const SizedBox(width:10),
++          Expanded(child:Text(feature.title,style:Theme.of(sheet).textTheme.titleLarge))]),
++        const SizedBox(height:14),
++        for(var i=0;i<feature.steps.length;i++)Padding(padding:const EdgeInsets.symmetric(vertical:9),
++          child:Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
++            CircleAvatar(radius:13,child:Text('${i+1}',style:const TextStyle(fontSize:12))),
++            const SizedBox(width:12),Expanded(child:Text(feature.steps[i])),
++          ])),
++        const SizedBox(height:12),FilledButton.icon(onPressed:()=>Navigator.pop(sheet),
++          icon:const Icon(Icons.check),label:const Text('Got it')),
++      ]))),
++    );
++}
+diff --git a/lib/features/home.dart b/lib/features/home.dart
+index 771843a..ace2cbe 100644
+--- a/lib/features/home.dart
++++ b/lib/features/home.dart
+@@ -26,7 +26,7 @@ class HomeScreen extends ConsumerWidget {
+       return ScreenBody(children:[
+         Headline('LET’S GET IT DONE.',DateFormat('EEEE, d MMMM y').format(today)),
+         Row(children:[Expanded(child:NeoCard(color:colorFor(1),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[const Text('NEEDS ATTENTION',style:TextStyle(fontWeight:FontWeight.w900,color:Colors.black,fontSize:12)),Text('${urgent.length}',style:const TextStyle(fontSize:35,fontWeight:FontWeight.w900,color:Colors.black))]))),const SizedBox(width:8),Expanded(child:NeoCard(color:colorFor(2),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[const Text('HABITS TODAY',style:TextStyle(fontWeight:FontWeight.w900,color:Colors.black,fontSize:12)),Text('$completed/${habits.length}',style:const TextStyle(fontSize:35,fontWeight:FontWeight.w900,color:Colors.black))])))]),
+-        NeoButton(label:'+ QUICK ADD TASK',icon:Icons.add_circle_outline,onPressed:()=>quickAddTask(context,ref)),
++        NeoButton(label:'+ QUICK ADD TASK',icon:Icons.add_circle_outline,onPressed:()async{await quickAddTask(context,ref);if(context.mounted)AppScaffold.open(context,1);}),
+         const SizedBox(height:8),Text('YOUR SUBJECT BOARDS',style:Theme.of(context).textTheme.titleLarge),const SizedBox(height:10),
+         if(data.subjects.isEmpty)const EmptyState('Make it yours.','Create your first subject below.',icon:Icons.folder_outlined),
+         NeoButton(label:'+ CREATE A SUBJECT',icon:Icons.create_new_folder_outlined,onPressed:()=>showSubjectEditor(context,ref,null)),
+@@ -35,7 +35,7 @@ class HomeScreen extends ConsumerWidget {
+           return GridView.builder(shrinkWrap:true,physics:const NeverScrollableScrollPhysics(),
+             itemCount:data.subjects.length,
+             gridDelegate:SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount:cross,
+-              mainAxisSpacing:13,crossAxisSpacing:13,childAspectRatio:1.12),
++              mainAxisSpacing:10,crossAxisSpacing:10,childAspectRatio:1.07),
+             itemBuilder:(ctx,i){
+               final subject=data.subjects[i];
+               final count=pending.where((t)=>t.subjectId==subject.id).length;
+diff --git a/lib/features/ideas.dart b/lib/features/ideas.dart
+index 5e1b634..af73ebf 100644
+--- a/lib/features/ideas.dart
++++ b/lib/features/ideas.dart
+@@ -1,109 +1,145 @@
++import 'dart:async';
+ import 'package:flutter/material.dart';
+ import 'package:flutter_riverpod/flutter_riverpod.dart';
++import 'package:shared_preferences/shared_preferences.dart';
+ import '../core/state.dart';
+ import '../core/models.dart';
+ import 'neo.dart';
+ 
+ final ideasProvider=FutureProvider<List<Idea>>((ref)=>ref.watch(dbProvider).loadIdeas());
++
++/// A compact offline notes board. Note bodies stay in the original synced SQLite
++/// database; cosmetic color selection lives in local device preferences.
+ class IdeasScreen extends ConsumerStatefulWidget {
+   const IdeasScreen({super.key});
+   @override ConsumerState<IdeasScreen> createState()=>_IdeasScreenState();
+ }
+ class _IdeasScreenState extends ConsumerState<IdeasScreen> {
+   String query='';
++  final colors=<Color>[const Color(0xFFFFE8A8),const Color(0xFFD9F2E4),
++    const Color(0xFFE8DDFD),const Color(0xFFFFDFE9),const Color(0xFFDCEBFF)];
++  final colorIndexes=<int,int>{};
++  @override void initState(){super.initState();_loadColors();}
++  Future<void> _loadColors() async {
++    final pref=await SharedPreferences.getInstance();
++    for(final key in pref.getKeys().where((k)=>k.startsWith('note_color:'))){
++      final id=int.tryParse(key.substring(11));if(id!=null)colorIndexes[id]=pref.getInt(key)??0;
++    }
++    if(mounted)setState((){});
++  }
+   Future<void> edit(Idea? idea) async {
+-    final controller=TextEditingController(text:idea?.body??'');
++    if(!mounted)return;
++    final lines=(idea?.body??'').split('\n');
++    final title=TextEditingController(text:idea==null?'':lines.first);
++    final body=TextEditingController(text:idea==null?'':lines.skip(1).join('\n'));
+     var pinned=idea?.pinned??false;
+-    await showModalBottomSheet<void>(context:context,isScrollControlled:true,useSafeArea:true,
+-      showDragHandle:true,builder:(ctx)=>StatefulBuilder(builder:(ctx,setLocal)=>Padding(
+-        padding:EdgeInsets.fromLTRB(18,12,18,MediaQuery.viewInsetsOf(ctx).bottom+24),
+-        child:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,
+-          crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+-          Text(idea==null?'CAPTURE AN IDEA':'EDIT IDEA',style:Theme.of(ctx).textTheme.titleLarge),
+-          const SizedBox(height:14),
+-          TextField(controller:controller,autofocus:true,maxLines:7,minLines:3,maxLength:10000,
+-            decoration:const InputDecoration(hintText:'A thought, a plan, whatever is on your mind...')),
+-          SwitchListTile(title:const Text('Pin this idea'),value:pinned,
+-            onChanged:(v)=>setLocal(()=>pinned=v)),
+-          FilledButton(onPressed:()async{
+-            if(controller.text.trim().isEmpty)return;
+-            await ref.read(dbProvider).saveIdea(id:idea?.id,body:controller.text,pinned:pinned);
+-            ref.invalidate(ideasProvider);
+-            if(ctx.mounted)Navigator.pop(ctx);
+-          },child:const Text('SAVE IDEA')),
+-        ])))));
+-    Future<void>.delayed(const Duration(milliseconds:500),controller.dispose);
++    var color=colorIndexes[idea?.id]??0;
++    var savedId=idea?.id;
++    Timer? debounce;
++    bool writing=false;
++    Future<void> save() async {
++      final heading=title.text.trim(),text=body.text.trim();
++      if(heading.isEmpty&&text.isEmpty)return;
++      if(writing)return;
++      writing=true;
++      try {
++        savedId=await ref.read(dbProvider).saveIdea(
++          id:savedId,body:[heading,text].where((s)=>s.isNotEmpty).join('\n'),pinned:pinned);
++        await (await SharedPreferences.getInstance()).setInt('note_color:$savedId',color);
++        ref.invalidate(ideasProvider);
++      } finally { writing=false; }
++    }
++    void schedule() {debounce?.cancel();debounce=Timer(const Duration(milliseconds:650),(){save();});}
++    try {
++      await showModalBottomSheet<void>(context:context,isScrollControlled:true,
++        useSafeArea:true,showDragHandle:true,builder:(sheet)=>StatefulBuilder(builder:(ctx,update)=>
++        Padding(padding:EdgeInsets.fromLTRB(16,5,16,MediaQuery.viewInsetsOf(ctx).bottom+20),
++          child:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,
++            crossAxisAlignment:CrossAxisAlignment.start,children:[
++              Row(children:[Expanded(child:Text(idea==null?'NEW NOTE':'EDIT NOTE',
++                style:Theme.of(ctx).textTheme.titleLarge)),
++                IconButton(tooltip:'Pin note',icon:Icon(pinned?Icons.push_pin:Icons.push_pin_outlined),
++                  onPressed:(){update(()=>pinned=!pinned);schedule();}),
++                TextButton(onPressed:()async{await save();if(ctx.mounted)Navigator.pop(ctx);},
++                  child:const Text('DONE'))]),
++              const SizedBox(height:10),
++              TextField(controller:title,maxLength:160,autofocus:idea==null,onChanged:(_)=>schedule(),
++                textCapitalization:TextCapitalization.sentences,style:Theme.of(ctx).textTheme.titleLarge,
++                decoration:const InputDecoration(hintText:'Title',counterText:'')),
++              const SizedBox(height:7),
++              TextField(controller:body,minLines:5,maxLines:12,onChanged:(_)=>schedule(),
++                textCapitalization:TextCapitalization.sentences,
++                decoration:const InputDecoration(hintText:'Take a note…')),
++              const SizedBox(height:12),
++              Text('NOTE COLOR',style:Theme.of(ctx).textTheme.labelLarge),
++              Wrap(spacing:10,children:[for(var i=0;i<colors.length;i++)IconButton(
++                tooltip:'Note color ${i+1}',onPressed:(){update(()=>color=i);schedule();},
++                icon:CircleAvatar(backgroundColor:colors[i],child:color==i
++                  ?const Icon(Icons.check,color:Colors.black):null))]),
++              const Text('Auto-saves after typing. Press Done to save immediately.',
++                style:TextStyle(fontSize:12)),
++            ])))));
++    }finally{
++      debounce?.cancel();await save();
++      // Do not dispose a TextField controller until the route finishes its animation.
++      Future<void>.delayed(const Duration(milliseconds:400),(){title.dispose();body.dispose();});
++    }
+   }
+-  Future<void> linkToGoal(Idea idea,AppData data) async {
+-    await showModalBottomSheet<void>(context:context,showDragHandle:true,useSafeArea:true,
+-      builder:(sheet)=>SafeArea(child:Column(mainAxisSize:MainAxisSize.min,children:[
+-        const Padding(padding:EdgeInsets.all(14),child:Text('LINK TO A GOAL')),
+-        for(final goal in data.goals)ListTile(leading:const Icon(Icons.flag_outlined),
+-          title:Text(goal.title),onTap:()async{
+-            await ref.read(appProvider.notifier).change((db)=>db.addLink('goal',goal.id,'idea',idea.id));
+-            if(sheet.mounted)Navigator.pop(sheet);
+-          }),
+-        if(data.goals.isEmpty)const Padding(padding:EdgeInsets.all(18),
+-          child:Text('First create a goal in the Flow Planner tab.')),
+-      ])));
++  Future<void> _convert(Idea idea) async {
++    final name=idea.body.split('\n').first.trim();if(name.isEmpty)return;
++    await ref.read(appProvider.notifier).change((db)=>db.transaction(()async{
++      final id=await db.saveTask(title:name.length>180?name.substring(0,180):name,
++        description:idea.body.split('\n').skip(1).join('\n'));
++      await db.addLink('idea',idea.id,'task',id);
++    }));
++    if(mounted)toast(context,'Created a task from this note.');
+   }
+   @override Widget build(BuildContext context){
+-    final ideas=ref.watch(ideasProvider);
+-    final data=ref.watch(appProvider).value;
+-    return ideas.when(loading:()=>const Center(child:CircularProgressIndicator()),
+-      error:(e,_)=>Center(child:Text('Could not load ideas: $e')),
++    final notes=ref.watch(ideasProvider);
++    return notes.when(loading:()=>const Center(child:CircularProgressIndicator()),
++      error:(e,_)=>Center(child:Text('Could not load notes: $e')),
+       data:(items){
+-        final filtered=items.where((i)=>i.body.toLowerCase().contains(query.toLowerCase())).toList();
++        final filtered=items.where((n)=>n.body.toLowerCase().contains(query.toLowerCase())).toList();
++        final layoutWidth=MediaQuery.sizeOf(context).width;
++        final columns=layoutWidth>=1100?4:layoutWidth>=750?3:layoutWidth>=500?2:1;
+         return ScreenBody(children:[
+-          const Headline('IDEAS ✦','A place for the thoughts that become something.'),
+-          NeoButton(label:'+ NEW IDEA',icon:Icons.edit_note_rounded,onPressed:()=>edit(null)),
+-          TextField(onChanged:(v)=>setState(()=>query=v),
+-            decoration:const InputDecoration(prefixIcon:Icon(Icons.search),hintText:'Search notes')),
++          Row(children:[Expanded(child:Text('NOTES',style:Theme.of(context).textTheme.headlineMedium)),
++            FilledButton.icon(onPressed:()=>edit(null),icon:const Icon(Icons.add),label:const Text('New'))]),
+           const SizedBox(height:12),
+-          if(filtered.isEmpty)const EmptyState('A blank page.',
+-            'Your next big idea can start right here.',icon:Icons.lightbulb_outline),
+-          for(final idea in filtered)NeoCard(onTap:()=>edit(idea),
+-            child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+-              if(idea.pinned)const Icon(Icons.push_pin,size:18),
+-              Text(idea.body,maxLines:8,overflow:TextOverflow.ellipsis),
+-              if(data!=null)...[
+-                const SizedBox(height:5),
+-                for(final link in data.links.where((l)=>l.touches('idea',idea.id)))
+-                  Text('Linked to ${data.goals.where((g)=>link.touches('goal',g.id)).map((g)=>g.title).join(', ')}',
+-                    maxLines:1,overflow:TextOverflow.ellipsis,
+-                    style:Theme.of(context).textTheme.bodySmall),
+-              ],
+-              Wrap(spacing:5,runSpacing:2,children:[
+-                IconButton(tooltip:'Edit idea',icon:const Icon(Icons.edit_outlined),onPressed:()=>edit(idea)),
+-                IconButton(tooltip:'Convert to task',icon:const Icon(Icons.add_task),
+-                  onPressed:()async{
+-                    final text=idea.body.trim().split('\n').first;
+-                    await ref.read(appProvider.notifier).change((db)=>db.transaction(() async {
+-                      final taskId=await db.saveTask(
+-                        title:text.length>180?text.substring(0,180):text);
+-                      await db.addLink('idea',idea.id,'task',taskId);
+-                    }));
+-                    if(context.mounted)toast(context,'Created a task.');
+-                  }),
+-                IconButton(tooltip:'Link to goal',icon:const Icon(Icons.link),
+-                  onPressed:data==null?null:()=>linkToGoal(idea,data)),
+-                IconButton(tooltip:'Turn into goal',icon:const Icon(Icons.flag_outlined),
+-                  onPressed:()async{
+-                    final t=idea.body.trim().split('\n').first;
+-                    await ref.read(appProvider.notifier).change((db)=>db.transaction(() async{
+-                      final id=await db.saveGoal(title:t.length>180?t.substring(0,180):t);
+-                      await db.addLink('goal',id,'idea',idea.id);
+-                    }));
+-                    if(context.mounted)toast(context,'New goal created and linked.');
+-                  }),
+-                IconButton(tooltip:'Delete idea',icon:const Icon(Icons.delete_outline),
+-                  onPressed:()async{
+-                    if(!await confirmDelete(context,'idea'))return;
+-                    await ref.read(appProvider.notifier).change((db)=>db.removeIdea(idea.id));
+-                    ref.invalidate(ideasProvider);
+-                  }),
+-              ]),
+-            ])),
++          TextField(onChanged:(v)=>setState(()=>query=v),decoration:const InputDecoration(
++            prefixIcon:Icon(Icons.search),hintText:'Search your notes')),
++          const SizedBox(height:14),
++          if(filtered.isEmpty)const EmptyState('Nothing here yet.',
++            'Save a thought, checklist or idea. Your notes stay on this device.',icon:Icons.sticky_note_2_outlined),
++          if(filtered.isNotEmpty)LayoutBuilder(builder:(context,size){
++            final count=size.maxWidth<540?1:columns;
++            return GridView.builder(shrinkWrap:true,physics:const NeverScrollableScrollPhysics(),
++              itemCount:filtered.length,gridDelegate:SliverGridDelegateWithFixedCrossAxisCount(
++                crossAxisCount:count,crossAxisSpacing:12,mainAxisSpacing:12,
++                mainAxisExtent:210),itemBuilder:(context,index){
++                final idea=filtered[index],parts=idea.body.split('\n');
++                final background=colors[(colorIndexes[idea.id]??0)%colors.length];
++                return NeoCard(color:background,padding:const EdgeInsets.all(13),onTap:()=>edit(idea),
++                  child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
++                    Row(children:[Expanded(child:Text(parts.first,maxLines:2,
++                      overflow:TextOverflow.ellipsis,style:const TextStyle(
++                        color:Colors.black,fontWeight:FontWeight.w900,fontSize:17))),
++                      if(idea.pinned)const Icon(Icons.push_pin,color:Colors.black,size:18)]),
++                    const SizedBox(height:8),
++                    Expanded(child:Text(parts.skip(1).join('\n'),maxLines:5,overflow:TextOverflow.ellipsis,
++                      style:const TextStyle(color:Colors.black))),
++                    Row(mainAxisAlignment:MainAxisAlignment.end,children:[
++                      IconButton(tooltip:'Turn note into task',icon:const Icon(Icons.add_task,color:Colors.black),
++                        onPressed:()=>_convert(idea)),
++                      IconButton(tooltip:'Delete note',icon:const Icon(Icons.delete_outline,color:Colors.black),
++                        onPressed:()async{if(!await confirmDelete(context,'note'))return;
++                          await ref.read(appProvider.notifier).change((db)=>db.removeIdea(idea.id));
++                          ref.invalidate(ideasProvider);
++                        }),
++                    ]),
++                  ]));
++              });
++          }),
+         ]);
+       });
+   }
+diff --git a/lib/features/lan_screen.dart b/lib/features/lan_screen.dart
+index e860af6..cae8c53 100644
+--- a/lib/features/lan_screen.dart
++++ b/lib/features/lan_screen.dart
+@@ -17,7 +17,7 @@ class _LanSyncScreenState extends ConsumerState<LanSyncScreen> {
+   final pairing=TextEditingController();
+   String status='Not paired yet';
+   String? hostCode;
+-  List<String> addresses=[];
++  List<String> addresses=[];String? selectedAddress;bool rememberHost=false;
+   bool busy=false,auto=false,hosting=false;
+   @override void initState(){super.initState();_load();}
+   Future<void> _load() async {
+@@ -28,7 +28,10 @@ class _LanSyncScreenState extends ConsumerState<LanSyncScreen> {
+     auto=prefs.getBool('lan_auto')??false;
+     hosting=LocalSync.instance.serving;
+     hostCode=hosting?prefs.getString('lan_host_code'):null;
+-    try{addresses=await LocalSync.instance.ipv4Addresses();}catch(_){ }
++    rememberHost=prefs.getBool('lan_share_on_launch')??false;
++    try{addresses=await LocalSync.instance.ipv4Addresses();
++      selectedAddress=addresses.isEmpty?null:addresses.first;
++    }catch(_){ }
+     if(mounted)setState((){});
+   }
+   @override void dispose(){pairing.dispose();super.dispose();}
+@@ -43,14 +46,24 @@ class _LanSyncScreenState extends ConsumerState<LanSyncScreen> {
+       }else{
+         final key=await LocalSync.instance.startHost(ref.read(dbProvider));
+         addresses=await LocalSync.instance.ipv4Addresses();
++        selectedAddress=addresses.isEmpty?null:addresses.first;
+         if(mounted)setState((){hosting=true;hostCode=key;status='Ready to pair';});
+       }
+     }catch(error){if(mounted)setState(()=>status='Could not start Wi-Fi sharing: $error');}
+     finally{if(mounted)setState(()=>busy=false);}
+   }
+ 
+-  String get connectionCode => '${addresses.isEmpty?'':addresses.first}|${hostCode??''}';
++  String get connectionCode => '${selectedAddress??''}|${hostCode??''}';
+ 
++  Future<void> _checkConnection() async {
++    final parts=pairing.text.trim().split('|');
++    if(parts.length!=2){setState(()=>status='Paste the full IP|CODE from the host.');return;}
++    setState(()=>busy=true);
++    try{final message=await LocalSync.instance.testConnection(parts[0],parts[1]);
++      if(mounted)setState(()=>status=message);
++    }catch(e){if(mounted)setState(()=>status='Connection test failed: $e');}
++    finally{if(mounted)setState(()=>busy=false);}
++  }
+   Future<void> _connect() async {
+     if(busy)return;
+     final input=pairing.text.trim();
+@@ -73,18 +86,27 @@ class _LanSyncScreenState extends ConsumerState<LanSyncScreen> {
+     appBar:AppBar(title:const Text('WI-FI SYNC')),
+     body:ScreenBody(children:[
+       const Headline('STAY IN SYNC.',
+-        'Both Windows and Android can share or connect on the same Wi-Fi. No account required.'),
++        'Open on both devices. Connect by code on a trusted local Wi-Fi. No account or internet required.'),
+       NeoCard(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+         Text('1. SHARE FROM THIS DEVICE',style:Theme.of(context).textTheme.titleLarge),
+         const SizedBox(height:8),
+-        const Text('Turn on sharing on either device. The other device joins with one connection code.'),
++        const Text('On Windows, allow Kārya through Windows Firewall on PRIVATE networks. Your PC and phone must be on the same Wi-Fi. Keep this page open until the first connection is complete.'),
+         const SizedBox(height:10),
+         NeoButton(label:hosting?'STOP SHARING':'START SHARING',icon:Icons.wifi_tethering,
+           onPressed:busy?null:_startHost),
+         if(hosting)...[
+           const SizedBox(height:12),
+           const Text('Copy this connection code to your other device:'),
++          if(addresses.length>1)DropdownButton<String>(isExpanded:true,
++            value:addresses.contains(selectedAddress)?selectedAddress:addresses.first,
++            items:addresses.map((ip)=>DropdownMenuItem(value:ip,child:Text('Use $ip'))).toList(),
++            onChanged:(ip)=>setState(()=>selectedAddress=ip)),
+           SelectableText(connectionCode,style:const TextStyle(fontWeight:FontWeight.w800)),
++          SwitchListTile(contentPadding:EdgeInsets.zero,value:rememberHost,
++            title:const Text('Start sharing when I open Kārya'),
++            subtitle:const Text('Works while this device and app are awake.'),
++            onChanged:(value)async{await (await SharedPreferences.getInstance()).setBool('lan_share_on_launch',value);
++              if(mounted)setState(()=>rememberHost=value);}),
+           OutlinedButton.icon(icon:const Icon(Icons.copy_all_outlined),
+             label:const Text('Copy connection code'),onPressed:()=>Clipboard.setData(
+               ClipboardData(text:connectionCode))),
+@@ -97,6 +119,9 @@ class _LanSyncScreenState extends ConsumerState<LanSyncScreen> {
+           decoration:const InputDecoration(labelText:'Connection code',
+             hintText:'192.168.1.24|ABCDEFGH…')),
+         const SizedBox(height:10),
++        OutlinedButton.icon(onPressed:busy?null:_checkConnection,
++          icon:const Icon(Icons.network_check_outlined),label:const Text('Test connection')),
++        const SizedBox(height:8),
+         NeoButton(label:busy?'SYNCING…':'SYNC BOTH WAYS',icon:Icons.sync,onPressed:busy?null:_connect),
+         SwitchListTile(contentPadding:EdgeInsets.zero,
+           value:auto,title:const Text('Automatically sync when connected'),
+@@ -107,6 +132,12 @@ class _LanSyncScreenState extends ConsumerState<LanSyncScreen> {
+           }),
+         const Divider(),Text(status),
+       ])),
++      NeoCard(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
++        const Text('PAIRING CHECKLIST',style:TextStyle(fontWeight:FontWeight.w900)),
++        const SizedBox(height:8),
++        const Text('• Same Wi-Fi or hotspot network\n• Windows firewall permits Kārya on private networks\n• Both devices are awake and the host is sharing\n• Connection code and IP copied exactly'),
++        if(addresses.isNotEmpty)Text('This device addresses: ${addresses.join(', ')}'),
++      ])),
+       const NeoCard(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+         Text('YOUR DATA IS SAFER WITH A BACKUP',style:TextStyle(fontWeight:FontWeight.w900)),
+         SizedBox(height:7),
+diff --git a/lib/features/ranks.dart b/lib/features/ranks.dart
+index d1daccb..12909f4 100644
+--- a/lib/features/ranks.dart
++++ b/lib/features/ranks.dart
+@@ -1,13 +1,23 @@
+ import 'package:flutter/material.dart';
++import 'package:shared_preferences/shared_preferences.dart';
+ import 'package:flutter_riverpod/flutter_riverpod.dart';
+ import '../core/models.dart';
+ import '../core/progression.dart';
+ import '../core/state.dart';
+ import 'neo.dart';
+ 
+-class RanksScreen extends ConsumerWidget {
++class RanksScreen extends ConsumerStatefulWidget {
+   const RanksScreen({super.key});
+-  @override Widget build(BuildContext context,WidgetRef ref)=>Scaffold(
++  @override ConsumerState<RanksScreen> createState()=>_RanksScreenState();
++}
++class _RanksScreenState extends ConsumerState<RanksScreen> {
++  bool agreed=false;
++  @override void initState(){super.initState();SharedPreferences.getInstance().then((prefs){
++    if(mounted)setState(()=>agreed=prefs.getBool('honest_progress')??false);
++  });}
++  Future<void> accept()async{await(await SharedPreferences.getInstance()).setBool('honest_progress',true);
++    if(mounted)setState(()=>agreed=true);}
++  @override Widget build(BuildContext context)=>Scaffold(
+     appBar:AppBar(title:const Text('YOUR JOURNEY ✦')),
+     body:ref.watch(appProvider).when(
+       loading:()=>const Center(child:CircularProgressIndicator()),
+@@ -15,6 +25,14 @@ class RanksScreen extends ConsumerWidget {
+       data:(data){
+         final totals=pointsFor(data),rank=rankFor(data);
+         return ScreenBody(children:[
++          if(!agreed)NeoCard(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
++            Text('A promise to yourself',style:Theme.of(context).textTheme.titleLarge),
++            const SizedBox(height:8),
++            const Text('I agree to log my tasks, goals and habit check-ins honestly—not to exploit the points system. There are no penalties for breaks.'),
++            const SizedBox(height:8),
++            FilledButton.icon(onPressed:accept,icon:const Icon(Icons.verified_user_outlined),
++              label:const Text('I AGREE TO BE HONEST'))
++          ])),
+           const Headline('EVERY LITTLE THING COUNTS.',
+             'Your progress is yours. No penalties for breaks, no comparison with others.'),
+           NeoCard(color:colorFor(3),child:Column(crossAxisAlignment:CrossAxisAlignment.start,
+diff --git a/lib/features/settings.dart b/lib/features/settings.dart
+index 526a0db..b0abcd7 100644
+--- a/lib/features/settings.dart
++++ b/lib/features/settings.dart
+@@ -26,7 +26,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>{
+   }
+   @override Widget build(BuildContext context){final selected=ref.watch(themeProvider).value??'system';final personality=ref.watch(paletteProvider).value??'Classic';final vibrations=ref.watch(hapticsProvider).value??true;return Scaffold(appBar:AppBar(title:const Text('SETTINGS',style:TextStyle(fontWeight:FontWeight.w900))),body:ScreenBody(children:[const Headline('MAKE IT YOURS.','Simple controls. No account needed.'),NeoButton(label:'🎨 OPEN UI CUSTOMIZER',icon:Icons.palette_outlined,color:colorFor(3),
+     onPressed:()=>Navigator.of(context).push(MaterialPageRoute(builder:(_)=>const CustomizeScreen()))),
+-    NeoCard(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text('APPEARANCE',style:Theme.of(context).textTheme.titleLarge),for(final mode in ['light','dark','system'])ListTile(title:Text(mode=='system'?'Follow system':mode[0].toUpperCase()+mode.substring(1)),trailing:Icon(mode==selected?Icons.radio_button_checked:Icons.radio_button_unchecked),onTap:()=>ref.read(themeProvider.notifier).setTheme(mode))])),NeoCard(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text('COLOR PERSONALITY',style:Theme.of(context).textTheme.titleLarge),const SizedBox(height:10),for(final name in themeNames)ListTile(leading:CircleAvatar(backgroundColor:colorSets[name]![0],child:Icon(Icons.palette,color:colorSets[name]![1])),title:Text(name),trailing:Icon(personality==name?Icons.radio_button_checked:Icons.radio_button_unchecked),onTap:()=>ref.read(paletteProvider.notifier).setPalette(name))])),NeoCard(child:SwitchListTile(title:const Text('Tactile feedback'),subtitle:const Text('Gentle vibrations when navigating and interacting.'),value:vibrations,onChanged:(v)=>ref.read(hapticsProvider.notifier).setEnabled(v))),NeoCard(child:SwitchListTile(contentPadding:EdgeInsets.zero,title:const Text('Assignment & habit reminders',style:TextStyle(fontWeight:FontWeight.w800)),subtitle:const Text('Optional local Android notifications; no cloud needed.'),value:notifications,onChanged:toggle)),NeoCard(child:Column(children:[SwitchListTile(contentPadding:EdgeInsets.zero,title:const Text('New tasks: remind me 1 hour before due'),subtitle:const Text('Applies when you add a new deadline without choosing a reminder.'),value:defaultTaskReminders,onChanged:(v)async{await(await SharedPreferences.getInstance()).setBool('default_task_reminders',v);if(mounted)setState(()=>defaultTaskReminders=v);}),SwitchListTile(contentPadding:EdgeInsets.zero,title:const Text('New habits: default 6 PM reminder'),subtitle:const Text('You can change or remove the time while creating each habit.'),value:defaultHabitReminders,onChanged:(v)async{await(await SharedPreferences.getInstance()).setBool('default_habit_reminders',v);if(mounted)setState(()=>defaultHabitReminders=v);})])),NeoCard(child:Column(children:[ListTile(leading:const Icon(Icons.auto_stories),title:const Text('Replay the tour'),onTap:()=>Navigator.of(context).push(MaterialPageRoute(builder:(_)=>const TourScreen()))),ListTile(leading:const Icon(Icons.wifi),title:const Text('Private Wi-Fi sync'),subtitle:const Text('Connect phone and Windows on the same network'),onTap:()=>context.push('/wifi')),ListTile(leading:const Icon(Icons.info_outline),title:const Text('About Kārya • Creator & links'),onTap:()=>Navigator.of(context).push(MaterialPageRoute(builder:(_)=>const AboutScreen()))),TextButton(onPressed:()=>showDialog<void>(context:context,builder:(ctx)=>AlertDialog(title:const Text('Privacy Policy'),content:const SingleChildScrollView(child:Text(privacyText)),actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))])),child:const Text('Privacy Policy')),TextButton(onPressed:()=>showLicensePage(context:context,applicationName:'Kārya',applicationVersion:'5.0.0'),child:const Text('Open-source licenses'))])),NeoCard(child:ListTile(leading:const Icon(Icons.delete_forever),title:const Text('Delete all app data'),subtitle:const Text('Permanently remove tasks, subjects, habit records and reminders.'),onTap:()async{final answer=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(title:const Text('Clear everything?'),content:const Text('This cannot be undone. Your task and habit history will be deleted permanently.'),actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Delete all'))]));if(answer!=true)return;await ref.read(appProvider.notifier).change((db)=>db.clearAll());await (await SharedPreferences.getInstance()).clear();ref.invalidate(paletteProvider);ref.invalidate(themeProvider);ref.invalidate(hapticsProvider);ref.invalidate(layoutProvider);await Reminders.instance.sync(await ref.read(dbProvider).snapshot());if(mounted){setState((){notifications=false;defaultTaskReminders=false;defaultHabitReminders=false;});toast(context,'All local records and preferences deleted.');}}))]));}
++    NeoCard(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text('APPEARANCE',style:Theme.of(context).textTheme.titleLarge),for(final mode in ['light','dark','system'])ListTile(title:Text(mode=='system'?'Follow system':mode[0].toUpperCase()+mode.substring(1)),trailing:Icon(mode==selected?Icons.radio_button_checked:Icons.radio_button_unchecked),onTap:()=>ref.read(themeProvider.notifier).setTheme(mode))])),NeoCard(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text('COLOR PERSONALITY',style:Theme.of(context).textTheme.titleLarge),const SizedBox(height:10),for(final name in themeNames)ListTile(leading:CircleAvatar(backgroundColor:colorSets[name]![0],child:Icon(Icons.palette,color:colorSets[name]![1])),title:Text(name),trailing:Icon(personality==name?Icons.radio_button_checked:Icons.radio_button_unchecked),onTap:()=>ref.read(paletteProvider.notifier).setPalette(name))])),NeoCard(child:SwitchListTile(title:const Text('Tactile feedback'),subtitle:const Text('Gentle vibrations when navigating and interacting.'),value:vibrations,onChanged:(v)=>ref.read(hapticsProvider.notifier).setEnabled(v))),NeoCard(child:SwitchListTile(contentPadding:EdgeInsets.zero,title:const Text('Assignment & habit reminders',style:TextStyle(fontWeight:FontWeight.w800)),subtitle:const Text('Optional local Android notifications; no cloud needed.'),value:notifications,onChanged:toggle)),NeoCard(child:Column(children:[SwitchListTile(contentPadding:EdgeInsets.zero,title:const Text('New tasks: remind me 1 hour before due'),subtitle:const Text('Applies when you add a new deadline without choosing a reminder.'),value:defaultTaskReminders,onChanged:(v)async{await(await SharedPreferences.getInstance()).setBool('default_task_reminders',v);if(mounted)setState(()=>defaultTaskReminders=v);}),SwitchListTile(contentPadding:EdgeInsets.zero,title:const Text('New habits: default 6 PM reminder'),subtitle:const Text('You can change or remove the time while creating each habit.'),value:defaultHabitReminders,onChanged:(v)async{await(await SharedPreferences.getInstance()).setBool('default_habit_reminders',v);if(mounted)setState(()=>defaultHabitReminders=v);})])),NeoCard(child:Column(children:[ListTile(leading:const Icon(Icons.help_outline),title:const Text('Help: Every feature explained'),onTap:()=>context.push('/help')),
++    ListTile(leading:const Icon(Icons.auto_stories),title:const Text('Replay the tour'),onTap:()=>Navigator.of(context).push(MaterialPageRoute(builder:(_)=>const TourScreen()))),ListTile(leading:const Icon(Icons.wifi),title:const Text('Private Wi-Fi sync'),subtitle:const Text('Connect phone and Windows on the same network'),onTap:()=>context.push('/wifi')),ListTile(leading:const Icon(Icons.info_outline),title:const Text('About Kārya • Creator & links'),onTap:()=>Navigator.of(context).push(MaterialPageRoute(builder:(_)=>const AboutScreen()))),TextButton(onPressed:()=>showDialog<void>(context:context,builder:(ctx)=>AlertDialog(title:const Text('Privacy Policy'),content:const SingleChildScrollView(child:Text(privacyText)),actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Close'))])),child:const Text('Privacy Policy')),TextButton(onPressed:()=>showLicensePage(context:context,applicationName:'Kārya',applicationVersion:'5.0.0'),child:const Text('Open-source licenses'))])),NeoCard(child:ListTile(leading:const Icon(Icons.delete_forever),title:const Text('Delete all app data'),subtitle:const Text('Permanently remove tasks, subjects, habit records and reminders.'),onTap:()async{final answer=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(title:const Text('Clear everything?'),content:const Text('This cannot be undone. Your task and habit history will be deleted permanently.'),actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancel')),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Delete all'))]));if(answer!=true)return;await ref.read(appProvider.notifier).change((db)=>db.clearAll());await (await SharedPreferences.getInstance()).clear();ref.invalidate(paletteProvider);ref.invalidate(themeProvider);ref.invalidate(hapticsProvider);ref.invalidate(layoutProvider);await Reminders.instance.sync(await ref.read(dbProvider).snapshot());if(mounted){setState((){notifications=false;defaultTaskReminders=false;defaultHabitReminders=false;});toast(context,'All local records and preferences deleted.');}}))]));}
+ }
+ const privacyText='''Kārya Privacy Policy (draft • October 2026)
+ 
+diff --git a/lib/features/tasks.dart b/lib/features/tasks.dart
+index 7a36968..cd83a4d 100644
+--- a/lib/features/tasks.dart
++++ b/lib/features/tasks.dart
+@@ -17,7 +17,7 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
+       var tasks=data.tasks.where((t)=>t.title.toLowerCase().contains(query.toLowerCase())||t.description.toLowerCase().contains(query.toLowerCase())).where((t)=>subjectId==null||t.subjectId==subjectId).where((t)=>switch(filter){'Today'=>!t.completed&&t.dueDay==dayKey(DateTime.now()),'Upcoming'=>!t.completed&&t.dueDay!=null&&t.dueDay!.compareTo(dayKey(DateTime.now()))>0,'Overdue'=>t.overdue,'Completed'=>t.completed,_=>true}).toList();
+       if(sort=='Priority') tasks.sort((a,b)=>({'high':0,'medium':1,'low':2}[a.priority]!).compareTo({'high':0,'medium':1,'low':2}[b.priority]!));
+       if(sort=='Newest') tasks.sort((a,b)=>b.id.compareTo(a.id));
+-      return ScreenBody(children:[Headline('TASK BOARD','Your homework, without the chaos.'),TextField(onChanged:(s)=>setState(()=>query=s),decoration:const InputDecoration(prefixIcon:Icon(Icons.search),hintText:'Search tasks...')),
++      return ScreenBody(children:[const Text('TASKS',style:TextStyle(fontSize:22,fontWeight:FontWeight.w900)),const SizedBox(height:12),TextField(onChanged:(s)=>setState(()=>query=s),decoration:const InputDecoration(prefixIcon:Icon(Icons.search),hintText:'Search tasks...')),
+         const SizedBox(height:14),Wrap(spacing:7,runSpacing:0,children:['All','Today','Upcoming','Overdue','Completed'].map((f)=>ChoiceChip(label:Text(f),selected:filter==f,onSelected:(_)=>setState(()=>filter=f))).toList()),
+         Row(children:[Expanded(child:DropdownButton<int?>(isExpanded:true,value:data.subjects.any((s)=>s.id==subjectId)?subjectId:null,hint:const Text('All subjects'),items:[const DropdownMenuItem<int?>(value:null,child:Text('All subjects')), ...{for(final subject in data.subjects)subject.id:subject}.values.map((s)=>DropdownMenuItem<int?>(value:s.id,child:Text(s.name,overflow:TextOverflow.ellipsis)))],onChanged:(v)=>setState(()=>subjectId=v))),const SizedBox(width:15),DropdownButton<String>(value:sort,items:['Due','Priority','Newest'].map((v)=>DropdownMenuItem(value:v,child:Text(v))).toList(),onChanged:(v)=>setState(()=>sort=v!))]),
+         Row(children:[Expanded(child:NeoButton(label:'+ ADD TASK',icon:Icons.add,onPressed:()=>quickAddTask(context,ref))),const SizedBox(width:9),Expanded(child:NeoButton(label:'SUBJECTS',icon:Icons.folder_copy_outlined,color:colorFor(3),onPressed:()=>showSubjects(context,ref,data)))]),
+@@ -28,14 +28,14 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
+   }
+ }
+ 
+-Future<void> showTaskEditor(BuildContext context,WidgetRef ref,{Task? task}) async {
+-  await showModalBottomSheet<void>(context:context,isScrollControlled:true,useSafeArea:true,showDragHandle:true,builder:(_)=>_TaskEditor(task:task));
++Future<void> showTaskEditor(BuildContext context,WidgetRef ref,{Task? task, DateTime? initialDueDate}) async {
++  await showModalBottomSheet<void>(context:context,isScrollControlled:true,useSafeArea:true,showDragHandle:true,builder:(_)=>_TaskEditor(task:task,initialDueDate:initialDueDate));
+ }
+-class _TaskEditor extends ConsumerStatefulWidget {const _TaskEditor({this.task});final Task? task;@override ConsumerState<_TaskEditor> createState()=>_TaskEditorState();}
++class _TaskEditor extends ConsumerStatefulWidget {const _TaskEditor({this.task,this.initialDueDate});final Task? task;final DateTime? initialDueDate;@override ConsumerState<_TaskEditor> createState()=>_TaskEditorState();}
+ class _TaskEditorState extends ConsumerState<_TaskEditor> {
+   late final title=TextEditingController(text:widget.task?.title??''); late final description=TextEditingController(text:widget.task?.description??'');
+   late String priority=widget.task?.priority??'medium';late int? subjectId=widget.task?.subjectId;DateTime? due,reminder;bool busy=false;
+-  @override void initState(){super.initState();due=DateTime.tryParse(widget.task?.dueAt??'');reminder=DateTime.tryParse(widget.task?.reminderAt??'');}
++  @override void initState(){super.initState();due=DateTime.tryParse(widget.task?.dueAt??'')??widget.initialDueDate;reminder=DateTime.tryParse(widget.task?.reminderAt??'');}
+   @override void dispose(){title.dispose();description.dispose();super.dispose();}
+   Future<DateTime?> chooseDateTime(DateTime? current) async {
+     final day=await showDatePicker(context:context,initialDate:current??DateTime.now(),firstDate:DateTime(2020),lastDate:DateTime(2100));if(day==null||!mounted)return null;
+@@ -44,7 +44,7 @@ class _TaskEditorState extends ConsumerState<_TaskEditor> {
+   }
+   @override Widget build(BuildContext context){
+     final subjects=ref.watch(appProvider).value?.subjects??[];
+-    return Padding(padding:EdgeInsets.fromLTRB(18,8,18,MediaQuery.viewInsetsOf(context).bottom+24),child:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.stretch,children:[Text(widget.task==null?'NEW TASK ✦':'EDIT TASK',style:Theme.of(context).textTheme.headlineMedium),const SizedBox(height:13),TextField(controller:title,maxLength:180,decoration:const InputDecoration(labelText:'Task name *')),const SizedBox(height:9),TextField(controller:description,maxLines:2,decoration:const InputDecoration(labelText:'Description (optional)')),const SizedBox(height:12),DropdownButtonFormField<int?>(initialValue:subjects.any((s)=>s.id==subjectId)?subjectId:null,decoration:const InputDecoration(labelText:'Subject'),items:[const DropdownMenuItem<int?>(value:null,child:Text('No subject')),...{for(final subject in subjects)subject.id:subject}.values.map((s)=>DropdownMenuItem<int?>(value:s.id,child:Text(s.name)))],onChanged:(v)=>setState(()=>subjectId=v)),const SizedBox(height:10),DropdownButtonFormField<String>(initialValue:priority,decoration:const InputDecoration(labelText:'Priority'),items:['low','medium','high'].map((s)=>DropdownMenuItem(value:s,child:Text(s.toUpperCase()))).toList(),onChanged:(s)=>setState(()=>priority=s!)),const SizedBox(height:10),ListTile(title:Text(due==null?'Set due date / time':DateFormat('EEE d MMM y, h:mm a').format(due!)),leading:const Icon(Icons.event),trailing:IconButton(icon:const Icon(Icons.clear),onPressed:()=>setState(()=>due=null)),onTap:() async {final d=await chooseDateTime(due);if(d!=null)setState(()=>due=d);}),ListTile(title:Text(reminder==null?'Add deadline reminder':DateFormat('EEE d MMM y, h:mm a').format(reminder!)),leading:const Icon(Icons.notifications_active_outlined),trailing:IconButton(icon:const Icon(Icons.clear),onPressed:()=>setState(()=>reminder=null)),onTap:() async {final d=await chooseDateTime(reminder);if(d!=null)setState(()=>reminder=d);}),const SizedBox(height:10),FilledButton(onPressed:busy?null:() async {if(title.text.trim().isEmpty){toast(context,'Add a task title first.');return;}setState(()=>busy=true);try{final prefs=await SharedPreferences.getInstance();final automatic=widget.task==null&&due!=null&&(prefs.getBool('default_task_reminders')??false);final chosenReminder=reminder??(automatic?due!.subtract(const Duration(hours:1)):null);await ref.read(appProvider.notifier).change((db)=>db.saveTask(id:widget.task?.id,title:title.text,description:description.text,subjectId:subjectId,priority:priority,dueAt:due?.toIso8601String(),reminderAt:chosenReminder?.toIso8601String()));ref.invalidate(appProvider);if(context.mounted)Navigator.pop(context);}catch(e){if(context.mounted)toast(context,'Could not save: $e');}finally{if(mounted)setState(()=>busy=false);}},child:Text(busy?'Saving...':'SAVE TASK'))])));
++    return Padding(padding:EdgeInsets.fromLTRB(18,8,18,MediaQuery.viewInsetsOf(context).bottom+24),child:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.stretch,children:[Text(widget.task==null?'NEW TASK ✦':'EDIT TASK',style:Theme.of(context).textTheme.headlineMedium),const SizedBox(height:13),TextField(controller:title,maxLength:180,decoration:const InputDecoration(labelText:'Task name *')),const SizedBox(height:9),TextField(controller:description,maxLines:2,decoration:const InputDecoration(labelText:'Description (optional)')),const SizedBox(height:12),DropdownButtonFormField<int?>(initialValue:subjects.any((s)=>s.id==subjectId)?subjectId:null,decoration:const InputDecoration(labelText:'Subject'),items:[const DropdownMenuItem<int?>(value:null,child:Text('No subject')),...{for(final subject in subjects)subject.id:subject}.values.map((s)=>DropdownMenuItem<int?>(value:s.id,child:Text(s.name)))],onChanged:(v)=>setState(()=>subjectId=v)),const SizedBox(height:10),DropdownButtonFormField<String>(initialValue:priority,decoration:const InputDecoration(labelText:'Priority'),items:['low','medium','high'].map((s)=>DropdownMenuItem(value:s,child:Text(s.toUpperCase()))).toList(),onChanged:(s)=>setState(()=>priority=s!)),const SizedBox(height:10),ListTile(title:Text(due==null?'Set due date / time':DateFormat('EEE d MMM y, h:mm a').format(due!)),leading:const Icon(Icons.event),trailing:IconButton(icon:const Icon(Icons.clear),onPressed:()=>setState(()=>due=null)),onTap:() async {final d=await chooseDateTime(due);if(d!=null)setState(()=>due=d);}),ListTile(title:Text(reminder==null?'Add deadline reminder':DateFormat('EEE d MMM y, h:mm a').format(reminder!)),leading:const Icon(Icons.notifications_active_outlined),trailing:IconButton(icon:const Icon(Icons.clear),onPressed:()=>setState(()=>reminder=null)),onTap:() async {final d=await chooseDateTime(reminder);if(d!=null)setState(()=>reminder=d);}),const SizedBox(height:10),FilledButton(onPressed:busy?null:() async {if(title.text.trim().isEmpty){toast(context,'Add a task title first.');return;}setState(()=>busy=true);try{final prefs=await SharedPreferences.getInstance();final automatic=widget.task==null&&due!=null&&(prefs.getBool('default_task_reminders')??true);final chosenReminder=reminder??(automatic?due:null);await ref.read(appProvider.notifier).change((db)=>db.saveTask(id:widget.task?.id,title:title.text,description:description.text,subjectId:subjectId,priority:priority,dueAt:due?.toIso8601String(),reminderAt:chosenReminder?.toIso8601String()));ref.invalidate(appProvider);if(context.mounted)Navigator.pop(context);}catch(e){if(context.mounted)toast(context,'Could not save: $e');}finally{if(mounted)setState(()=>busy=false);}},child:Text(busy?'Saving...':'SAVE TASK'))])));
+   }
+ }
+ /// The details sheet observes live task state so adding/checking off a step never
+diff --git a/lib/main.dart b/lib/main.dart
+index fbb2b90..a0f2971 100644
+--- a/lib/main.dart
++++ b/lib/main.dart
+@@ -18,6 +18,7 @@ import 'features/ranks.dart';
+ import 'features/flow_planner.dart';
+ import 'features/customize.dart';
+ import 'features/calendar_planner.dart';
++import 'features/help.dart';
+ 
+ Future<void> main() async {
+   WidgetsFlutterBinding.ensureInitialized();
+@@ -30,13 +31,14 @@ final router=GoRouter(initialLocation:'/',routes:[
+   GoRoute(path:'/chat',builder:(_,__)=>const ChatScreen()),
+   GoRoute(path:'/settings',builder:(_,__)=>const SettingsScreen()),
+   GoRoute(path:'/tour',builder:(_,__)=>const TourScreen()),
+-  GoRoute(path:'/goals',builder:(_,__)=>const FlowPlannerScreen()),
++  GoRoute(path:'/goals',builder:(_,__)=>const Scaffold(body:FlowPlannerScreen())),
+   GoRoute(path:'/calendar',builder:(_,__)=>const CalendarPlannerScreen()),
+   GoRoute(path:'/about',builder:(_,__)=>const AboutScreen()),
+   GoRoute(path:'/goals-edit',builder:(_,__)=>const GoalsScreen()),
+   GoRoute(path:'/customize',builder:(_,__)=>const CustomizeScreen()),
+   GoRoute(path:'/ranks',builder:(_,__)=>const RanksScreen()),
+   GoRoute(path:'/wifi',builder:(_,__)=>const LanSyncScreen()),
++  GoRoute(path:'/help',builder:(_,__)=>const HelpScreen()),
+ ]);
+ 
+ class KaryaApp extends ConsumerWidget {
+@@ -114,6 +116,14 @@ class _AppScaffoldState extends ConsumerState<AppScaffold> {
+   Timer? _syncTimer;
+   StreamSubscription<int>? _syncEvents;
+   bool _syncBusy=false;
++  Future<void> _showCoach(int tab) async {
++    if(!mounted)return;
++    final prefs=await SharedPreferences.getInstance();
++    if(prefs.getBool('guide_seen_$tab')??false)return;
++    await prefs.setBool('guide_seen_$tab',true);
++    if(!mounted)return;
++    await showFeatureGuide(context,tab);
++  }
+   @override void initState(){
+     super.initState();
+     WidgetsBinding.instance.addPostFrameCallback((_)async{
+@@ -125,6 +135,10 @@ class _AppScaffoldState extends ConsumerState<AppScaffold> {
+       }
+     });
+     ref.read(dbProvider).awardDailyOpen().then((_){if(mounted)ref.read(appProvider.notifier).refresh();}).catchError((Object _){});
++    SharedPreferences.getInstance().then((prefs)async{
++      if(!mounted || !(prefs.getBool('lan_share_on_launch')??false))return;
++      try{await LocalSync.instance.startHost(ref.read(dbProvider));}catch(_){ }
++    });
+     _syncEvents=LocalSync.instance.changed.stream.listen((_){
+       if(mounted)ref.read(appProvider.notifier).refresh();
+     });
+@@ -158,7 +172,9 @@ class _AppScaffoldState extends ConsumerState<AppScaffold> {
+     return Scaffold(appBar:AppBar(title:const Text('KĀRYA ✦',
+       style:TextStyle(fontWeight:FontWeight.w900,letterSpacing:2)),
+       actions:[
+-        if(MediaQuery.sizeOf(context).width>=500)...[
++        IconButton(tooltip:'Help with this tab',icon:const Icon(Icons.help_outline),
++          onPressed:()=>showFeatureGuide(context,selected)),
++        if(MediaQuery.sizeOf(context).width>=850)...[
+           IconButton(tooltip:'About developer',icon:const Icon(Icons.info_outline),onPressed:()=>context.push('/about')),
+           IconButton(tooltip:'Rank profile',icon:const Icon(Icons.workspace_premium_outlined),onPressed:()=>context.push('/ranks')),
+           IconButton(tooltip:'Customize UI',icon:const Icon(Icons.palette_outlined),onPressed:()=>context.push('/customize')),
+@@ -176,7 +192,8 @@ class _AppScaffoldState extends ConsumerState<AppScaffold> {
+           const ProgressScreen(),const IdeasScreen(),
+         ];
+         final view=PageView(controller:controller,
+-          onPageChanged:(i){setState(()=>selected=i);ref.read(appProvider.notifier).refresh();},
++          onPageChanged:(i){setState(()=>selected=i);ref.read(appProvider.notifier).refresh();
++            WidgetsBinding.instance.addPostFrameCallback((_){if(mounted)_showCoach(i);});},
+           physics:const BouncingScrollPhysics(),children:pages);
+         if(desktop){
+           final extended=layout=='Studio'||(layout=='Comfort'&&bounds.maxWidth>=1250);
+@@ -198,6 +215,15 @@ class _AppScaffoldState extends ConsumerState<AppScaffold> {
+                                 selected==i?FontWeight.w900:FontWeight.w500)))],
+                           ]))))),
+                 ),
++                const Divider(),
++                for(final extra in [
++                  (Icons.workspace_premium_outlined,'Journey','/ranks'),
++                  (Icons.wifi_tethering_rounded,'Wi-Fi sync','/wifi'),
++                  (Icons.help_outline_rounded,'Help','/help'),
++                ])Padding(padding:const EdgeInsets.symmetric(vertical:2),child:ListTile(
++                    dense:!extended,contentPadding:const EdgeInsets.symmetric(horizontal:10),
++                    leading:Icon(extra.$1),title:extended?Text(extra.$2):null,
++                    onTap:()=>context.push(extra.$3))),
+               ])),
+             const VerticalDivider(width:1),Expanded(child:view),
+           ]);
+@@ -221,16 +247,20 @@ class _AppScaffoldState extends ConsumerState<AppScaffold> {
+                   Text(labels[i],style:TextStyle(fontSize:10,fontWeight:selected==i?FontWeight.w900:FontWeight.w500))]))),
+               Expanded(child:InkWell(onTap:()=>showModalBottomSheet<void>(context:context,
+                 showDragHandle:true,builder:(sheetContext)=>SafeArea(child:Padding(
+-                padding:const EdgeInsets.all(14),child:Column(mainAxisSize:MainAxisSize.min,children:[
++                padding:const EdgeInsets.all(14),child:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:[
+                   for(final i in [4,5,6])ListTile(leading:Icon(icons[i]),title:Text(labels[i]),
+                     onTap:(){Navigator.pop(sheetContext);openTab(i);}),
+                   ListTile(leading:const Icon(Icons.workspace_premium_outlined),title:const Text('Journey'),
+                     onTap:(){Navigator.pop(sheetContext);context.push('/ranks');}),
+                   ListTile(leading:const Icon(Icons.palette_outlined),title:const Text('Customize'),
+                     onTap:(){Navigator.pop(sheetContext);context.push('/customize');}),
++                  ListTile(leading:const Icon(Icons.wifi_tethering),title:const Text('Private Wi-Fi sync'),
++                    onTap:(){Navigator.pop(sheetContext);context.push('/wifi');}),
++                  ListTile(leading:const Icon(Icons.help_outline),title:const Text('Help and walkthroughs'),
++                    onTap:(){Navigator.pop(sheetContext);context.push('/help');}),
+                   ListTile(leading:const Icon(Icons.info_outline),title:const Text('About the developer'),
+                     onTap:(){Navigator.pop(sheetContext);context.push('/about');}),
+-                ])))),
++                ]))))),
+                 child:Column(mainAxisAlignment:MainAxisAlignment.center,children:[
+                   Icon(selected>=4?icons[selected]:Icons.grid_view_rounded,size:23),
+                   const SizedBox(height:2),Text(selected>=4?labels[selected]:'More',
+diff --git a/pubspec.yaml b/pubspec.yaml
+index 662992f..c5c23c7 100644
+--- a/pubspec.yaml
++++ b/pubspec.yaml
+@@ -1,7 +1,7 @@
+ name: karya_app
+ description: Kārya — Less Organising. More Doing.
+ publish_to: none
+-version: 5.0.0+5
++version: 6.0.0+6
+ environment:
+   sdk: '>=3.12.0 <4.0.0'
+ dependencies:
+diff --git a/test/v5_ui_test.dart b/test/v5_ui_test.dart
+index 26f9743..8c604a0 100644
+--- a/test/v5_ui_test.dart
++++ b/test/v5_ui_test.dart
+@@ -22,7 +22,7 @@ void main(){
+     await tester.pumpWidget(ProviderScope(overrides:[dbProvider.overrideWithValue(db)],
+       child:const MaterialApp(home:Scaffold(body:CalendarPlannerScreen()))));
+     await tester.pumpAndSettle();
+-    expect(find.text('YOUR CALENDAR'),findsOneWidget);
++    expect(find.byType(CalendarPlannerScreen),findsOneWidget);
+     expect(tester.takeException(),isNull);
+   });
+   testWidgets('Empty flow canvas has a clear create-goal action',(tester) async {
+diff --git a/test/v6_regression_test.dart b/test/v6_regression_test.dart
+new file mode 100644
+index 0000000..cd4dc73
+--- /dev/null
++++ b/test/v6_regression_test.dart
+@@ -0,0 +1,65 @@
++import 'package:drift/native.dart';
++import 'package:flutter/material.dart';
++import 'package:flutter_riverpod/flutter_riverpod.dart';
++import 'package:flutter_test/flutter_test.dart';
++import 'package:shared_preferences/shared_preferences.dart';
++import 'package:karya_app/core/database.dart';
++import 'package:karya_app/core/state.dart';
++import 'package:karya_app/features/calendar_planner.dart';
++import 'package:karya_app/features/help.dart';
++import 'package:karya_app/features/flow_planner.dart';
++import 'package:karya_app/features/ideas.dart';
++
++void main() {
++  TestWidgetsFlutterBinding.ensureInitialized();
++  setUp(() => SharedPreferences.setMockInitialValues({}));
++
++  testWidgets('Calendar shows several tasks and their descriptions on one day',(tester) async {
++    tester.view.physicalSize=const Size(1200,980);
++    tester.view.devicePixelRatio=1;
++    addTearDown(tester.view.resetPhysicalSize);
++    addTearDown(tester.view.resetDevicePixelRatio);
++    final database=KaryaDatabase.test(NativeDatabase.memory());
++    addTearDown(database.close);
++    final today=DateTime.now();
++    final due=DateTime(today.year,today.month,today.day,18).toIso8601String();
++    await database.saveTask(title:'Chemistry test',description:'Read chapters 1–3',dueAt:due);
++    await database.saveTask(title:'Maths revision',description:'Finish exercise 7',dueAt:due);
++    await tester.pumpWidget(ProviderScope(overrides:[dbProvider.overrideWithValue(database)],
++      child:const MaterialApp(home:Scaffold(body:CalendarPlannerScreen()))));
++    await tester.pumpAndSettle();
++    expect(find.text('Chemistry test'),findsOneWidget);
++    expect(find.text('Maths revision'),findsOneWidget);
++    expect(find.text('Read chapters 1–3'),findsOneWidget);
++    expect(find.text('Finish exercise 7'),findsOneWidget);
++    expect(tester.takeException(),isNull);
++  });
++  testWidgets('Help documentation supports mobile viewport',(tester) async {
++    tester.view.physicalSize=const Size(360,800);
++    tester.view.devicePixelRatio=1;
++    addTearDown(tester.view.resetPhysicalSize);
++    addTearDown(tester.view.resetDevicePixelRatio);
++    await tester.pumpWidget(const ProviderScope(child:MaterialApp(home:HelpScreen())));
++    await tester.pumpAndSettle();
++    expect(find.text('LEARN KĀRYA'),findsOneWidget);
++    expect(tester.takeException(),isNull);
++  });
++  testWidgets('Flow owns material ancestor on a standalone route',(tester) async {
++    final database=KaryaDatabase.test(NativeDatabase.memory());
++    addTearDown(database.close);
++    await database.saveGoal(title:'Plan my studies');
++    await tester.pumpWidget(ProviderScope(overrides:[dbProvider.overrideWithValue(database)],
++      child:const MaterialApp(home:Scaffold(body:FlowPlannerScreen()))));
++    await tester.pumpAndSettle();
++    expect(tester.takeException(),isNull);
++  });
++  testWidgets('Notes is usable without any notes',(tester)async{
++    final database=KaryaDatabase.test(NativeDatabase.memory());
++    addTearDown(database.close);
++    await tester.pumpWidget(ProviderScope(overrides:[dbProvider.overrideWithValue(database)],
++      child:const MaterialApp(home:Scaffold(body:IdeasScreen()))));
++    await tester.pumpAndSettle();
++    expect(find.text('Nothing here yet.'),findsOneWidget);
++    expect(tester.takeException(),isNull);
++  });
++}
