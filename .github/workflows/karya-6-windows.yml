@@ -4,7 +4,8 @@ on:
   push:
     branches: [main]
     paths:
-      - 'Karya_6.0_Flutter_Source.zip'
+      - 'ci/karya6.patch'
+      - '.github/workflows/karya-6-windows.yml'
 permissions:
   contents: read
 jobs:
@@ -13,13 +14,17 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
-      - name: Restore Karya 6 source
+      - name: Restore Kārya 5 and apply the Kārya 6 patch
         shell: pwsh
         run: |
-          if (!(Test-Path 'Karya_6.0_Flutter_Source.zip')) { throw 'Upload Karya 6 source ZIP first' }
-          Expand-Archive -Path 'Karya_6.0_Flutter_Source.zip' -DestinationPath "$env:RUNNER_TEMP/karya6" -Force
-          Copy-Item -Path "$env:RUNNER_TEMP/karya6/Karya_6.0_Flutter/*" -Destination . -Recurse -Force
-          if (!(Test-Path 'lib/features/help.dart')) { throw 'Karya 6 source missing' }
+          if (!(Test-Path 'Karya_5.0_Flutter_Source.zip')) { throw 'Karya 5 source ZIP missing' }
+          Expand-Archive -Path 'Karya_5.0_Flutter_Source.zip' -DestinationPath "$env:RUNNER_TEMP/karya-base" -Force
+          Copy-Item -Path "$env:RUNNER_TEMP/karya-base/Karya_5.0_Flutter/*" -Destination . -Recurse -Force
+          git apply --check ci/karya6.patch
+          if ($LASTEXITCODE -ne 0) { throw 'Patch validation failed' }
+          git apply ci/karya6.patch
+          if ($LASTEXITCODE -ne 0) { throw 'Patch application failed' }
+          if (!(Test-Path 'test/v6_regression_test.dart')) { throw 'Kārya 6 tests missing' }
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
