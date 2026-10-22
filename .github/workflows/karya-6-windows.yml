@@ -1,0 +1,50 @@
+name: Karya 6 Windows validation
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'Karya_6.0_Flutter_Source.zip'
+permissions:
+  contents: read
+jobs:
+  validate-and-build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - name: Restore Karya 6 source
+        shell: pwsh
+        run: |
+          if (!(Test-Path 'Karya_6.0_Flutter_Source.zip')) { throw 'Upload Karya 6 source ZIP first' }
+          Expand-Archive -Path 'Karya_6.0_Flutter_Source.zip' -DestinationPath "$env:RUNNER_TEMP/karya6" -Force
+          Copy-Item -Path "$env:RUNNER_TEMP/karya6/Karya_6.0_Flutter/*" -Destination . -Recurse -Force
+          if (!(Test-Path 'lib/features/help.dart')) { throw 'Karya 6 source missing' }
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Windows platform tooling
+        run: flutter create --platforms=windows --project-name=karya_app --no-pub .
+      - name: Clean Flutter template test
+        shell: pwsh
+        run: |
+          if (Test-Path 'test/widget_test.dart') { Remove-Item 'test/widget_test.dart' -Force }
+      - run: flutter pub get
+      - name: Format Dart
+        run: dart format lib test integration_test
+      - name: Analyze (errors fatal)
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+      - name: Flutter regression tests
+        run: flutter test test
+      - name: Build desktop exe and runtime
+        run: flutter build windows --release
+      - name: Package Windows app
+        shell: pwsh
+        run: Compress-Archive -Path 'build/windows/x64/runner/Release/*' -DestinationPath 'Karya_6_Windows.zip' -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Karya_6_Windows_Portable
+          path: Karya_6_Windows.zip
+          if-no-files-found: error
+          retention-days: 14
