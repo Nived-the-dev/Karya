@@ -6,6 +6,7 @@ on:
     paths:
       - 'Karya_3.0_Flutter_Source.zip'
       - '.github/workflows/karya-3-windows.yml'
+      - 'ci/fix_v3_tap.py'
 permissions:
   contents: read
 jobs:
@@ -40,6 +41,8 @@ jobs:
           text = text.replace("final logs=<String>{'2026-10-21','2026-10-21'};", "final logs=<String>{'2026-10-21'};\n    logs.add('2026-10-21');")
           logic.write_text(text, encoding='utf-8')
           '@ | python -
+      - name: Fix immediate button tap response
+        run: python ci/fix_v3_tap.py
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos
       - run: flutter test test
