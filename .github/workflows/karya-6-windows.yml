@@ -26,9 +26,14 @@ jobs:
             if (Test-Path $folder) { Remove-Item -Path $folder -Recurse -Force }
           }
           Copy-Item -Path "$env:RUNNER_TEMP/karya-base/Karya_5.0_Flutter/*" -Destination . -Recurse -Force
-          git apply --check ci/karya6.patch
+          Write-Host "Source first lines:"
+          Get-Content 'lib/main.dart' -TotalCount 4
+          Write-Host "Zip source first lines:"
+          Get-Content "$env:RUNNER_TEMP/karya-base/Karya_5.0_Flutter/lib/main.dart" -TotalCount 4
+          # Check patch in binary-compatible mode (Windows checkout may use CRLF)
+          git -c core.autocrlf=false apply --ignore-whitespace --check ci/karya6.patch
           if ($LASTEXITCODE -ne 0) { throw 'Patch validation failed' }
-          git apply ci/karya6.patch
+          git -c core.autocrlf=false apply --ignore-whitespace ci/karya6.patch
           if ($LASTEXITCODE -ne 0) { throw 'Patch application failed' }
           if (!(Test-Path 'test/v6_regression_test.dart')) { throw 'Kārya 6 tests missing' }
       - uses: subosito/flutter-action@v2
