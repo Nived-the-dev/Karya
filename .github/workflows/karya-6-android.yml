@@ -4,7 +4,8 @@ on:
   push:
     branches: [main]
     paths:
-      - 'Karya_6.0_Flutter_Source.zip'
+      - 'ci/karya6.patch'
+      - '.github/workflows/karya-6-android.yml'
 permissions:
   contents: read
 jobs:
@@ -13,12 +14,15 @@ jobs:
     timeout-minutes: 80
     steps:
       - uses: actions/checkout@v5
-      - name: Restore Karya 6 source
+      - name: Restore Kārya 5 and apply the Kārya 6 patch
+        shell: bash
         run: |
-          test -f Karya_6.0_Flutter_Source.zip
-          mkdir -p "$RUNNER_TEMP/karya6"
-          unzip -q Karya_6.0_Flutter_Source.zip -d "$RUNNER_TEMP/karya6"
-          cp -a "$RUNNER_TEMP/karya6/Karya_6.0_Flutter"/. .
+          test -f Karya_5.0_Flutter_Source.zip
+          mkdir -p "$RUNNER_TEMP/karya-base"
+          unzip -q Karya_5.0_Flutter_Source.zip -d "$RUNNER_TEMP/karya-base"
+          cp -a "$RUNNER_TEMP/karya-base/Karya_5.0_Flutter"/. .
+          git apply --check ci/karya6.patch
+          git apply ci/karya6.patch
           test -f lib/features/help.dart
           test -f test/v6_regression_test.dart
       - uses: actions/setup-java@v5
