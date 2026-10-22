@@ -32,7 +32,7 @@ jobs:
         run: |
           if (Test-Path 'test/widget_test.dart') { Remove-Item 'test/widget_test.dart' -Force }
       - name: Repair Kārya 4 source compatibility
-        run: python ci/fix_v4_build.py
+        run: python -X utf8 ci/fix_v4_build.py
       - run: flutter pub get
       - run: dart format lib test integration_test
       - run: flutter analyze --no-fatal-infos --no-fatal-warnings
