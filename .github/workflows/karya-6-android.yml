@@ -1,0 +1,54 @@
+name: Karya 6 Android validation
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'Karya_6.0_Flutter_Source.zip'
+permissions:
+  contents: read
+jobs:
+  validate-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 80
+    steps:
+      - uses: actions/checkout@v5
+      - name: Restore Karya 6 source
+        run: |
+          test -f Karya_6.0_Flutter_Source.zip
+          mkdir -p "$RUNNER_TEMP/karya6"
+          unzip -q Karya_6.0_Flutter_Source.zip -d "$RUNNER_TEMP/karya6"
+          cp -a "$RUNNER_TEMP/karya6/Karya_6.0_Flutter"/. .
+          test -f lib/features/help.dart
+          test -f test/v6_regression_test.dart
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Android platform tooling
+        run: flutter create --platforms=android --project-name=karya_app --no-pub .
+      - name: SDK 36
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Clean Flutter template test
+        run: rm -f test/widget_test.dart
+      - run: flutter pub get
+      - name: Format Dart
+        run: dart format lib test integration_test
+      - name: Analyze (errors fatal)
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+      - name: Flutter regression tests
+        run: flutter test test
+      - name: Build Android APK
+        run: flutter build apk --debug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Karya_6_Android_APK
+          path: build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
