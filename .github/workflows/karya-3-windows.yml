@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'Karya_3.0_Flutter_Source.zip'
+      - '.github/workflows/karya-3-windows.yml'
 permissions:
   contents: read
 jobs:
@@ -25,6 +26,20 @@ jobs:
           channel: stable
           cache: true
       - run: flutter create --platforms=windows --project-name=karya_app --no-pub .
+      - name: Remove generated Flutter template test and clean warnings
+        shell: pwsh
+        run: |
+          if (Test-Path 'test/widget_test.dart') { Remove-Item 'test/widget_test.dart' -Force }
+          @'
+          from pathlib import Path
+          db = Path('test/database_test.dart')
+          text = db.read_text(encoding='utf-8')
+          db.write_text(text.replace("import 'package:karya_app/core/models.dart';\n", ""), encoding='utf-8')
+          logic = Path('test/logic_test.dart')
+          text = logic.read_text(encoding='utf-8')
+          text = text.replace("final logs=<String>{'2026-10-21','2026-10-21'};", "final logs=<String>{'2026-10-21'};\n    logs.add('2026-10-21');")
+          logic.write_text(text, encoding='utf-8')
+          '@ | python -
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos
       - run: flutter test test
