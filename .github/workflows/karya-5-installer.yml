@@ -1,0 +1,73 @@
+name: Karya 5 standalone Windows installer
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/karya-5-installer.yml'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  installer:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+      - name: Retrieve verified Karya 5 Windows build
+        uses: actions/download-artifact@v4
+        with:
+          name: Karya_5_Windows_App
+          path: downloaded
+          run-id: 39803556879
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Expand Windows application
+        shell: pwsh
+        run: |
+          Expand-Archive -Path 'downloaded/Karya_5_Windows.zip' -DestinationPath 'app' -Force
+          if (!(Test-Path 'app/karya_app.exe')) { throw 'Missing Windows executable' }
+          if (!(Test-Path 'app/flutter_windows.dll')) { throw 'Missing Flutter runtime' }
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+      - name: Build single Windows installer executable
+        shell: pwsh
+        run: |
+          @'
+          [Setup]
+          AppId={{A9277805-EED4-4D06-8DDA-88C8B20DC4AC}
+          AppName=Karya
+          AppVersion=5.0
+          AppPublisher=Nived
+          DefaultDirName={localappdata}\Programs\Karya
+          DefaultGroupName=Karya
+          OutputDir=.
+          OutputBaseFilename=Karya_5.0_Windows_Setup
+          Compression=lzma2
+          SolidCompression=yes
+          WizardStyle=modern
+          PrivilegesRequired=lowest
+          UninstallDisplayIcon={app}\karya_app.exe
+          ArchitecturesAllowed=x64compatible
+          ArchitecturesInstallIn64BitMode=x64compatible
+          [Files]
+          Source: "app\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+          [Icons]
+          Name: "{autoprograms}\Karya"; Filename: "{app}\karya_app.exe"
+          Name: "{autodesktop}\Karya"; Filename: "{app}\karya_app.exe"; Tasks: desktopicon
+          [Tasks]
+          Name: desktopicon; Description: "Create a desktop shortcut"; Flags: unchecked
+          [Run]
+          Filename: "{app}\karya_app.exe"; Description: "Launch Karya"; Flags: nowait postinstall skipifsilent
+          '@ | Set-Content -Encoding utf8 'karya-setup.iss'
+          $iscc = Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'Inno Setup 6\ISCC.exe'
+          if (!(Test-Path $iscc)) { throw 'Inno Setup compiler not installed' }
+          & $iscc 'karya-setup.iss'
+          if ($LASTEXITCODE -ne 0) { throw "Installer compilation failed ($LASTEXITCODE)" }
+          if (!(Test-Path 'Karya_5.0_Windows_Setup.exe')) { throw 'Installer missing' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Karya_5_Windows_Installer
+          path: Karya_5.0_Windows_Setup.exe
+          if-no-files-found: error
+          retention-days: 14
