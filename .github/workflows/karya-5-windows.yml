@@ -1,0 +1,52 @@
+name: Karya 5 Windows desktop build
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'Karya_5.0_Flutter_Source.zip'
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - name: Restore complete Karya 5 source
+        shell: pwsh
+        run: |
+          if (!(Test-Path 'Karya_5.0_Flutter_Source.zip')) { throw 'Missing Karya_5.0_Flutter_Source.zip' }
+          Expand-Archive -Path 'Karya_5.0_Flutter_Source.zip' -DestinationPath "$env:RUNNER_TEMP/karya-v5" -Force
+          Copy-Item -Path "$env:RUNNER_TEMP/karya-v5/Karya_5.0_Flutter/*" -Destination . -Recurse -Force
+          if (!(Test-Path 'lib/features/calendar_planner.dart')) { throw 'Karya 5 source was not extracted' }
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: false
+      - name: Generate missing Windows runner
+        run: flutter create --platforms=windows --project-name=karya_app --no-pub .
+      - name: Clean incompatible Flutter template test
+        shell: pwsh
+        run: |
+          if (Test-Path 'test/widget_test.dart') { Remove-Item 'test/widget_test.dart' -Force }
+      - name: Resolve packages
+        run: flutter pub get
+      - name: Format and syntax-check
+        run: dart format lib test integration_test
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+      - name: Automated tests
+        run: flutter test test
+      - name: Build Windows release
+        run: flutter build windows --release
+      - name: Package desktop app
+        shell: pwsh
+        run: Compress-Archive -Path 'build/windows/x64/runner/Release/*' -DestinationPath 'Karya_5_Windows.zip' -Force
+      - name: Upload Windows app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Karya_5_Windows_App
+          path: Karya_5_Windows.zip
+          if-no-files-found: error
+          retention-days: 14
