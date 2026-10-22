@@ -1,0 +1,45 @@
+name: Karya 4 Windows desktop build
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'Karya_4.0_Flutter_Source.zip'
+permissions:
+  contents: read
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - name: Restore Karya 4 source
+        shell: pwsh
+        run: |
+          if (!(Test-Path 'Karya_4.0_Flutter_Source.zip')) { throw 'Source ZIP missing from repository root.' }
+          Expand-Archive -Path 'Karya_4.0_Flutter_Source.zip' -DestinationPath "$env:RUNNER_TEMP/karya4" -Force
+          Copy-Item -Path "$env:RUNNER_TEMP/karya4/Karya_4.0_Flutter/*" -Destination . -Recurse -Force
+          if (!(Test-Path 'lib/features/ranks.dart')) { throw 'Version 4 source missing.' }
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: false
+      - run: flutter create --platforms=windows --project-name=karya_app --no-pub .
+      - name: Remove generated example test
+        shell: pwsh
+        run: |
+          if (Test-Path 'test/widget_test.dart') { Remove-Item 'test/widget_test.dart' -Force }
+      - run: flutter pub get
+      - run: dart format lib test integration_test
+      - run: flutter analyze --no-fatal-infos --no-fatal-warnings
+      - run: flutter test test
+      - run: flutter build windows --release
+      - name: Package Windows app
+        shell: pwsh
+        run: Compress-Archive -Path 'build/windows/x64/runner/Release/*' -DestinationPath 'Karya_4_Windows.zip' -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Karya_4_Windows_App
+          path: Karya_4_Windows.zip
+          if-no-files-found: error
+          retention-days: 14
