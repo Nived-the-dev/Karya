@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'Karya_4.0_Flutter_Source.zip'
+      - '.github/workflows/karya-4-android.yml'
+      - 'ci/fix_v4_build.py'
 permissions:
   contents: read
 jobs:
@@ -39,6 +41,8 @@ jobs:
           ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
       - name: Remove generated example test
         run: rm -f test/widget_test.dart
+      - name: Repair Kārya 4 source compatibility
+        run: python3 ci/fix_v4_build.py
       - run: flutter pub get
       - run: dart format lib test integration_test
       - run: flutter analyze --no-fatal-infos --no-fatal-warnings
