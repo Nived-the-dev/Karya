@@ -1,0 +1,52 @@
+name: Karya 4 Android test build
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'Karya_4.0_Flutter_Source.zip'
+permissions:
+  contents: read
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v5
+      - name: Restore Karya 4 from ZIP
+        shell: bash
+        run: |
+          test -f Karya_4.0_Flutter_Source.zip
+          mkdir -p "$RUNNER_TEMP/karya-v4"
+          unzip -q Karya_4.0_Flutter_Source.zip -d "$RUNNER_TEMP/karya-v4"
+          cp -a "$RUNNER_TEMP/karya-v4/Karya_4.0_Flutter"/. .
+          test -f lib/features/flow_planner.dart
+          test -f lib/features/ranks.dart
+          test -f lib/features/folder_board.dart
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: false
+      - name: Android platform tooling
+        run: flutter create --platforms=android --project-name=karya_app --no-pub .
+      - name: Android SDK 36
+        run: |
+          yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --licenses >/dev/null || true
+          ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Remove generated example test
+        run: rm -f test/widget_test.dart
+      - run: flutter pub get
+      - run: dart format lib test integration_test
+      - run: flutter analyze --no-fatal-infos --no-fatal-warnings
+      - run: flutter test test
+      - run: flutter build apk --debug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Karya_4_Android_Test_APK
+          path: build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
